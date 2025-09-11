@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit System</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #F8FAFC;
+            color: #111827;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .app-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #FFFFFF;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(30, 41, 59, 0.06);
+            border: 1px solid #E5E7EB;
+        }
+
+        .app-header h1 {
+            color: #1E293B;
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .app-header .subtitle {
+            color: #64748B;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        /* Navigation Tabs */
+        .tab-navigation {
+            display: flex;
+            margin-bottom: 20px;
+            background: #F1F5F9;
+            border-radius: 8px;
+            padding: 4px;
+        }
+
+        .tab-btn {
+            background: transparent;
+            color: #475569;
+            border: none;
+            border-radius: 6px;
+            padding: 12px 24px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            flex: 1;
+            font-size: 14px;
+        }
+
+        .tab-btn:hover {
+            background: #E2E8F0;
+            color: #334155;
+        }
+
+        .tab-btn.active {
+            background: #2563EB;
+            color: #FFFFFF;
+            box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+        }
+
+        .tab-btn:focus {
+            outline: 2px solid #2563EB;
+            outline-offset: 2px;
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Cards */
+        .card {
+            background: #FFFFFF;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(30, 41, 59, 0.06);
+            margin-bottom: 16px;
+            border: 1px solid #E5E7EB;
+        }
+
+        .card__body {
+            padding: 24px;
+        }
+
+        /* Typography */
+        h1, h2, h3, h4 {
+            color: #1E293B;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        h2 {
+            font-size: 22px;
+        }
+
+        h3 {
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+
+        h4 {
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        p {
+            margin-bottom: 12px;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #2563EB;
+            color: #FFFFFF;
+            border: 2px solid #2563EB;
+            border-radius: 6px;
+            padding: 10px 18px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.15s;
+            min-height: 40px;
+        }
+
+        .btn:hover {
+            background: #1D4ED8;
+            border-color: #1D4ED8;
+            color: #FFFFFF;
+        }
+
+        .btn:focus {
+            outline: 2px solid #1E40AF;
+            outline-offset: 2px;
+        }
+
+        .btn:active {
+            background: #1E40AF;
+            border-color: #1E40AF;
+        }
+
+        .btn:disabled {
+            background: #E5E7EB;
+            color: #9CA3AF;
+            border-color: #E5E7EB;
+            cursor: not-allowed;
+        }
+
+        .btn--primary {
+            background: #2563EB;
+            color: #FFFFFF;
+            border-color: #2563EB;
+        }
+
+        .btn--primary:hover {
+            background: #1D4ED8;
+            border-color: #1D4ED8;
+        }
+
+        .btn--outline {
+            background: #FFFFFF;
+            color: #2563EB;
+            border-color: #2563EB;
+        }
+
+        .btn--outline:hover {
+            background: #2563EB;
+            color: #FFFFFF;
+        }
+
+        /* Compact button for smaller inline actions like "Link" */
+        .btn--compact {
+            padding: 6px 12px;
+            font-size: 13px;
+            min-height: 32px;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            display: block;
+            color: #334155;
+            font-weight: 600;
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+
+        .form-control {
+            width: 100%;
+            border: 2px solid #CBD5E1;
+            color: #111827;
+            background: #FFFFFF;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.15s;
+        }
+
+        .form-control:focus {
+            border-color: #2563EB;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        select.form-control {
+            cursor: pointer;
+        }
+
+        /* Checkboxes and Labels */
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            color: #111827;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            margin-right: 8px;
+            accent-color: #2563EB;
+            width: 16px;
+            height: 16px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        /* Text Colors */
+        .text-secondary {
+            color: #64748B !important;
+        }
+
+        .text-error {
+            color: #DC2626 !important;
+        }
+
+        .text-warning {
+            color: #CA8A04 !important;
+        }
+
+        .text-success {
+            color: #059669 !important;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+            border-radius: 6px;
+            border: 1px solid #E5E7EB;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        .data-table th,
+        .data-table td {
+            border: 1px solid #E5E7EB;
+            padding: 12px 10px;
+            text-align: left;
+            color: #111827;
+        }
+
+        .data-table th {
+            background: #F8FAFC;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .data-table tbody tr:nth-child(even) {
+            background: #FEFEFE;
+        }
+
+        .data-table tbody tr:hover {
+            background: #F1F5F9;
+        }
+
+        /* Control Rows */
+        .controls-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .report-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* Review Controls */
+        .review-controls {
+            margin-bottom: 20px;
+        }
+
+        /* Dashboard Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .stats-card .card__body {
+            text-align: center;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-label {
+            display: block;
+            color: #64748B;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            display: block;
+            color: #1E293B;
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .stat-value.text-error {
+            color: #DC2626;
+        }
+
+        .stat-value.text-warning {
+            color: #CA8A04;
+        }
+
+        .stat-value.text-success {
+            color: #059669;
+        }
+
+        /* Chart Container */
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        /* Utility Classes */
+        .hidden {
+            display: none !important;
+        }
+
+        .processing-indicator {
+            text-align: center;
+            padding: 40px;
+            color: #64748B;
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #E5E7EB;
+            border-top: 3px solid #2563EB;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* File Info */
+        .file-info {
+            background: #F0F9FF;
+            border: 1px solid #BAE6FD;
+            border-radius: 6px;
+            padding: 16px;
+            margin-top: 16px;
+        }
+
+        /* Mapping Grid */
+        .mapping-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin: 16px 0;
+        }
+
+        /* Attachments Grid */
+        .attachments-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 12px;
+        }
+
+        /* Links */
+        a {
+            color: #2563EB;
+            text-decoration: underline;
+            font-weight: 600;
+        }
+
+        a:hover,
+        a:focus {
+            color: #1D4ED8;
+            text-decoration: underline;
+        }
+
+        /* Modal Styles */
+        #confirm-modal,
+        #link-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #confirm-modal > div,
+        #link-modal > div {
+            background: #FFFFFF;
+            border-radius: 8px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+            color: #111827;
+        }
+
+        #confirm-modal h3,
+        #link-modal h3 {
+            color: #1E293B;
+            margin: 0;
+            padding: 16px 16px 0 16px;
+        }
+
+        /* Toast Styles */
+        .toast {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            background: #1E293B;
+            color: #F8FAFC;
+            padding: 16px;
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            max-width: 400px;
+            z-index: 1001;
+        }
+
+        /* Report Options and Preview */
+        .report-options {
+            margin-bottom: 24px;
+        }
+
+        .report-preview {
+            border-top: 2px solid #E5E7EB;
+            padding-top: 24px;
+            margin-top: 24px;
+        }
+
+        .report-content {
+            background: #FAFAFA;
+            border: 1px solid #E5E7EB;
+            border-radius: 6px;
+            padding: 24px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 12px;
+            }
+
+            .controls-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .mapping-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .tab-navigation {
+                flex-wrap: wrap;
+            }
+
+            .tab-btn {
+                flex: 1 1 auto;
+                min-width: 120px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="app-header">
+            <h1>Audit System</h1>
+            <p class="subtitle">Material Audit Tool POC</p>
+        </header>
+
+        <nav class="tab-navigation">
+            <button class="tab-btn active" data-tab="upload">Import</button>
+            <button class="tab-btn" data-tab="review">Review</button>
+            <button class="tab-btn" data-tab="dashboard">Dashboard</button>
+            <button class="tab-btn" data-tab="reports">Reports</button>
+        </nav>
+
+        <!-- Upload Tab -->
+        <section id="upload-tab" class="tab-content active">
+            <div class="card">
+                <div class="card__body">
+                    <h2>Import General Ledger Data</h2>
+                    <p class="text-secondary">Upload your Excel file containing GL line items for FAR compliance review.</p>
+                    <div class="form-group" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <label class="form-label" for="file-input">Choose Excel file (.xlsx or .xls)</label>
+                        <input type="file" id="file-input" accept=".xlsx,.xls" class="form-control">
+                        <p class="text-secondary">Select your GL export and it will be processed automatically.</p>
+                        <button class="btn" id="ms-open-gl">Import from Microsoft 365</button>
+                    </div>
+
+                    <div id="file-info" class="file-info hidden">
+                        <h4>File Information</h4>
+                        <div id="file-details"></div>
+                        <button class="btn btn--primary" id="process-btn">Process File</button>
+                    </div>
+
+                    <div id="mapping-ui" class="card hidden" style="margin-top: 16px;">
+                        <div class="card__body">
+                            <h3>Column Mapping</h3>
+                            <p class="text-secondary">Your file layout looks different. Map columns to fields below.</p>
+                            <div class="controls-row" style="gap: 12px; flex-wrap: wrap;">
+                                <div class="form-group">
+                                    <label class="form-label" for="header-row-input">Header row (1-based)</label>
+                                    <input type="number" id="header-row-input" class="form-control" min="1" value="1" style="width: 120px;">
+                                </div>
+                            </div>
+                            <div class="mapping-grid">
+                                <div class="form-group">
+                                    <label class="form-label" for="map-account">Account</label>
+                                    <select id="map-account" class="form-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="map-description">Description</label>
+                                    <select id="map-description" class="form-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="map-amount">Amount</label>
+                                    <select id="map-amount" class="form-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="map-date">Date</label>
+                                    <select id="map-date" class="form-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="map-category">Category</label>
+                                    <select id="map-category" class="form-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="map-vendor">Vendor</label>
+                                    <select id="map-vendor" class="form-control"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="map-contract">Contract #</label>
+                                    <select id="map-contract" class="form-control"></select>
+                                </div>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <h4>Preview</h4>
+                                <div class="table-container" style="max-height: 260px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
+                                    <table class="data-table" id="mapping-preview-table"></table>
+                                </div>
+                                <p class="text-secondary">Tip: Focus a mapping field, then click a column header to assign it.</p>
+                            </div>
+                            <div class="report-actions" style="gap: 8px; margin-top: 12px;">
+                                <button class="btn btn--primary" id="apply-mapping-btn">Apply Mapping</button>
+                                <button class="btn" id="suggest-mapping-btn" title="Uses server LLM when configured">Suggest Mapping (LLM)</button>
+                                <button class="btn btn--outline" id="save-mapping-btn">Save as Default</button>
+                            </div>
+                            <p id="mapping-status" class="text-secondary"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Supporting Documents Import -->
+            <div class="card" style="margin-top: 12px;">
+                <div class="card__body">
+                    <h2>Import Supporting Documents</h2>
+                    <div style="background:#E0F2FE; color:#0C4A6E; border:2px solid #7DD3FC; padding:12px; border-radius:6px; margin-bottom:12px;">
+                        Linking of receipts/invoices happens in the <strong>Review</strong> tab. Uploaded images are processed with <strong>enhanced Codex OCR</strong> (Tesseract + Azure Form Recognizer) and automatically matched to GL line items using vendor, amount and date.
+                    </div>
+                    <p class="text-secondary">Attach receipts/invoices/approvals. A single file may contain multiple items; the system will attempt to split and match them.</p>
+                    <div class="form-group">
+                        <label class="form-label" for="docs-input">Choose files (.pdf, .docx, .png, .jpg)</label>
+                        <input type="file" id="docs-input" accept=".pdf,.docx,.png,.jpg,.jpeg" class="form-control" multiple>
+                    </div>
+                    <div class="report-actions" style="gap: 8px;">
+                        <button class="btn btn--primary" id="ingest-docs-btn">Upload & Parse</button>
+                        <span id="docs-status" class="text-secondary"></span>
+                        <button class="btn" id="ms-open-docs">Import from Microsoft 365</button>
+                    </div>
+
+                    <div id="docs-summary" class="text-secondary" style="margin-top: 12px;"></div>
+                    <div id="upload-report" class="text-secondary" style="margin-top: 6px; color:#059669;"></div>
+                    <div id="docs-class-list" style="margin-top: 12px;"></div>
+                    <div style="margin-top: 16px;">
+                        <h3>Attachments</h3>
+                        <p class="text-secondary">Images and files that are not classified as receipts or invoices.</p>
+                        <div id="attachments-gallery" class="attachments-grid"></div>
+                    </div>
+                    <div id="docs-dropzone" style="margin-top: 12px; border: 2px dashed #94A3B8; border-radius: 8px; padding: 16px; text-align: center; color: #475569;">
+                        Drag & drop receipts/invoices here (PDF, PNG, JPG, DOCX).
+                        <div class="text-secondary" style="margin-top: 4px;">Large batches are uploaded in chunks automatically.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 12px;">
+                <div class="card__body">
+                    <h3>Admin</h3>
+                    <p class="text-secondary">Danger zone: permanently delete data from this app instance.</p>
+                    <div class="controls-row" style="gap: 8px; flex-wrap: wrap;">
+                        <button class="btn btn--outline" id="admin-clear-gl" title="Delete all GL entries and links">Delete GL</button>
+                        <button class="btn btn--outline" id="admin-clear-docs" title="Delete all documents/images and links">Delete Images</button>
+                        <button class="btn btn--primary" id="admin-clear-all" title="Delete GL and documents">Delete ALL Data</button>
+                        <span id="admin-status" class="text-secondary"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Confirm Modal -->
+            <div id="confirm-modal" style="display:none; position: fixed; inset: 0; background: rgba(15,23,42,0.7); z-index: 1000; align-items: center; justify-content: center;">
+              <div style="background: #fff; border-radius: 8px; max-width: 420px; width: 92%; box-shadow: 0 20px 50px rgba(0,0,0,0.3);">
+                <div style="padding: 16px 16px 0 16px;"><h3 id="confirm-title">Confirm Action</h3></div>
+                <div style="padding: 8px 16px 16px 16px; color: #475569;" id="confirm-message">Are you sure?</div>
+                <div style="display:flex; gap:8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+                  <button class="btn btn--outline" id="confirm-cancel">Cancel</button>
+                  <button class="btn btn--primary" id="confirm-ok">Yes, Continue</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" id="ms-panel" style="margin-top: 12px; display: none;">
+                <div class="card__body">
+                    <div style="display:flex; justify-content: space-between; align-items: center; gap:8px;">
+                      <h3>Microsoft 365 (OneDrive/SharePoint)</h3>
+                      <button class="btn btn--outline" id="ms-close">Close</button>
+                    </div>
+                    <p class="text-secondary">Sign in with Microsoft and import Excel workbooks and documents directly from your OneDrive or SharePoint.</p>
+                    <div class="controls-row" style="gap: 8px; flex-wrap: wrap; align-items: center;">
+                        <button class="btn btn--primary" id="ms-login-btn">Sign in with Microsoft</button>
+                        <button class="btn btn--outline" id="ms-logout-btn">Sign out</button>
+                        <span id="ms-status" class="text-secondary"></span>
+                    </div>
+                    <div class="controls-row" style="gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center;">
+                        <input type="text" id="ms-search-input" class="form-control" placeholder="Search Excel/PDF/Images (e.g. GL, Receipts)">
+                        <button class="btn" id="ms-search-btn">Search</button>
+                        <button class="btn" id="ms-recent-btn">List Recent</button>
+                        <button class="btn btn--primary" id="ms-import-btn">Import Selected</button>
+                        <button class="btn btn--outline" id="ms-select-all">Select All</button>
+                    </div>
+                    <div class="controls-row" style="gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center;">
+                        <button class="btn" id="ms-browse-btn">Browse Folders</button>
+                        <button class="btn btn--outline" id="ms-folder-up">Up</button>
+                        <label class="checkbox-label"><input type="checkbox" id="ms-include-sub"> Include subfolders</label>
+                        <span id="ms-path" class="text-secondary">/</span>
+                        <button class="btn" id="ms-use-folder-btn">Use Folder (All Files)</button>
+                    </div>
+                    <div id="ms-files" class="table-container" style="margin-top: 8px; display: none;"></div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Review Tab -->
+        <section id="review-tab" class="tab-content">
+            <div class="review-controls">
+                <div class="controls-row">
+                    <div class="form-group">
+                        <label class="form-label">Filter by Severity:</label>
+                        <select id="severity-filter" class="form-control">
+                            <option value="">All Items</option>
+                            <option value="RED">Red - Expressly Unallowable</option>
+                            <option value="YELLOW">Yellow - Requires Review</option>
+                            <option value="GREEN">Green - Compliant</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Search:</label>
+                        <input type="text" id="search-input" class="form-control" placeholder="Search descriptions...">
+                    </div>
+                    <label class="checkbox-label" style="align-self:flex-end; margin-left:8px;">
+                        <input type="checkbox" id="pending-only"> Pending receipts/approvals only
+                    </label>
+                    <label class="checkbox-label" style="align-self:flex-end; margin-left:8px;">
+                        <input type="checkbox" id="linked-only"> Show linked only
+                    </label>
+                    <span id="pending-count" class="text-secondary" style="align-self:flex-end; margin-left:8px;"></span>
+                    <span id="linked-count" class="text-secondary" style="align-self:flex-end; margin-left:8px;"></span>
+                    <button class="btn btn--primary" id="run-audit-btn">Run FAR Audit</button>
+                    <button class="btn" id="llm-review-btn" title="Uses server LLM provider when configured">LLM Review</button>
+                </div>
+                <div id="review-toast" class="text-secondary" style="margin-top:6px; color:#059669;"></div>
+            </div>
+
+            <div class="card">
+                <div class="card__body">
+                    <div id="processing-indicator" class="processing-indicator hidden">
+                        <div class="spinner"></div>
+                        <p>Processing GL entries against FAR compliance rules...</p>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="gl-table" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Account</th>
+                                    <th>Description</th>
+                                    <th>Amount</th>
+                                    <th>Date</th>
+                                    <th>Category</th>
+                                    <th>Vendor</th>
+                                    <th>Attachments</th>
+                                    <th>Approval</th>
+                                    <th>FAR Issue</th>
+                                </tr>
+                            </thead>
+                            <tbody id="gl-table-body">
+                                <!-- Data will be populated here -->
+                                <!-- Example of where compact Link buttons would appear -->
+                                <tr>
+                                    <td>🟡</td>
+                                    <td>5000</td>
+                                    <td>Office supplies</td>
+                                    <td>$125.50</td>
+                                    <td>2025-09-05</td>
+                                    <td>Supplies</td>
+                                    <td>Office Depot</td>
+                                    <td><button class="btn btn--compact btn--outline">Link</button></td>
+                                    <td>Pending</td>
+                                    <td>Requires receipt</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LLM Debug -->
+            <div class="card" id="llm-debug-card" style="display: none; margin-top: 12px;">
+                <div class="card__body">
+                    <div style="display:flex; justify-content: space-between; align-items: center;">
+                        <h3>LLM Debug Output</h3>
+                        <button class="btn btn--outline" id="toggle-llm-debug">Hide</button>
+                    </div>
+                    <pre id="llm-debug" style="max-height: 300px; overflow: auto; background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 6px;"></pre>
+                </div>
+            </div>
+
+            <!-- Unmatched & Linking -->
+            <div class="card" style="margin-top: 12px;">
+                <div class="card__body">
+                    <h3>Unmatched Items Requiring Receipts/Approvals</h3>
+                    <div id="unmatched-list" style="margin-top: 8px;"></div>
+                </div>
+            </div>
+
+            <!-- Quick Link Modal -->
+            <div id="link-modal" style="display:none; position: fixed; inset: 0; background: rgba(15,23,42,0.7); z-index: 1000; align-items: center; justify-content: center;">
+              <div style="background: #fff; border-radius: 8px; max-width: 720px; width: 96%; box-shadow: 0 20px 50px rgba(0,0,0,0.3);">
+                <div style="padding: 16px 16px 0 16px;"><h3 id="link-title">Link Document</h3></div>
+                <div style="padding: 8px 16px 16px 16px;">
+                  <input type="text" id="link-search" class="form-control" placeholder="Search vendor/date/amount" />
+                  <div id="link-list" style="margin-top: 8px; max-height: 300px; overflow: auto;"></div>
+                </div>
+                <div style="display:flex; gap:8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+                  <button class="btn btn--outline" id="link-cancel">Cancel</button>
+                  <button class="btn btn--primary" id="link-ok">Link Selected</button>
+                </div>
+              </div>
+            </div>
+
+        </section>
+
+        <!-- Dashboard Tab -->
+        <section id="dashboard-tab" class="tab-content">
+            <div class="dashboard-grid">
+                <div class="stats-card card">
+                    <div class="card__body">
+                        <h3>Audit Summary</h3>
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-label">Total Items</span>
+                                <span class="stat-value" id="total-items">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Red Flags</span>
+                                <span class="stat-value text-error" id="red-count">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Yellow Flags</span>
+                                <span class="stat-value text-warning" id="yellow-count">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Compliant</span>
+                                <span class="stat-value text-success" id="green-count">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card card">
+                    <div class="card__body">
+                        <h3>Compliance Overview</h3>
+                        <div class="chart-container" style="position: relative; height: 300px;">
+                            <canvas id="compliance-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card card">
+                    <div class="card__body">
+                        <h3>Violations by FAR Section</h3>
+                        <div class="chart-container" style="position: relative; height: 300px;">
+                            <canvas id="violations-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card card">
+                    <div class="card__body">
+                        <h3>Amount by Compliance Status</h3>
+                        <div class="chart-container" style="position: relative; height: 300px;">
+                            <canvas id="amount-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Reports Tab -->
+        <section id="reports-tab" class="tab-content">
+            <div class="card">
+                <div class="card__body">
+                    <h2>Audit Report Generation</h2>
+                    <p class="text-secondary">Generate comprehensive audit reports for DCAA submission.</p>
+
+                    <div class="report-options">
+                        <div class="form-group">
+                            <label class="form-label">Report Title:</label>
+                            <input type="text" id="report-title" class="form-control" value="FAR Compliance Audit Report">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Contract Number:</label>
+                            <input type="text" id="contract-number" class="form-control" placeholder="Enter contract number">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Include Sections:</label>
+                            <div class="checkbox-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="include-summary" checked> Executive Summary
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="include-violations" checked> Detailed Violations
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="include-recommendations" checked> Recommendations
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="report-actions">
+                            <button class="btn btn--primary" id="generate-report-btn">Generate Report</button>
+                            <button class="btn btn--outline" id="export-pdf-btn">Export as PDF</button>
+                        </div>
+                    </div>
+
+                    <div id="report-preview" class="report-preview hidden">
+                        <h3>Report Preview</h3>
+                        <div id="report-content" class="report-content">
+                            <!-- Report content will be generated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <script type="module" src="app.js"></script>
+
+    <!-- Undo Toast -->
+    <div id="undo-toast" class="toast" style="display:none;">
+      <div id="undo-toast-msg" style="margin-bottom: 8px; font-size: 14px;">Linked a document.</div>
+      <div style="display:flex; gap:8px; justify-content: flex-end;">
+        <button class="btn btn--outline" id="undo-toast-dismiss">Dismiss</button>
+        <button class="btn btn--primary" id="undo-toast-undo">Undo</button>
+      </div>
+    </div>
+</body>
+</html>

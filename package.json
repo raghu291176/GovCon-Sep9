@@ -1,0 +1,29 @@
+{
+  "name": "govcon-far-audit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FAR Compliance Audit System with Codex Document Processing",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "nodemon backend/server.js",
+    "postinstall": "npm install --omit=dev --prefix backend"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "tesseract.js": "^4.1.1",
+    "@azure/ai-form-recognizer": "^4.1.0",
+    "axios": "^1.5.0",
+    "fuzzball": "^2.1.2",
+    "moment": "^2.29.4",
+    "multer": "^1.4.5-lts.1",
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "optionalDependencies": {}
+}

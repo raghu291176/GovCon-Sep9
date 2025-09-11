@@ -1,0 +1,27 @@
+{
+  "name": "doc-router-next",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Next.js API to route uploaded documents to Azure DI or Mistral OCR with fast skim OCR.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -p ${PORT:-8080}",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next-connect": "^1.0.0-next.5",
+    "multer": "^2.0.0",
+    "next": "^14.2.5",
+    "pdf-parse": "^1.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sharp": "^0.33.4",
+    "tesseract.js": "^5.0.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.5"
+  }
+}
