@@ -12,18 +12,20 @@
     "node": "20.x"
   },
   "dependencies": {
-    "tesseract.js": "^4.1.1",
-    "@azure/ai-form-recognizer": "^4.1.0",
-    "axios": "^1.5.0",
-    "fuzzball": "^2.1.2",
-    "moment": "^2.29.4",
-    "multer": "^1.4.5-lts.1",
-    "express": "^4.18.2",
-    "dotenv": "^16.3.1",
-    "cors": "^2.8.5"
+    "axios": "^1.0.0",
+    "cors": "^2.8.0",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0",
+    "fuzzball": "^2.2.3",
+    "moment": "^2.30.1",
+    "multer": "^1.4.0",
+    "tesseract.js": "^4.1.4",
+    "@azure/cognitiveservices-computervision": "^8.2.0",
+    "@azure/ms-rest-js": "^2.6.4",
+    "sharp": "^0.33.1",
+    "pdf2pic": "^3.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
-  },
-  "optionalDependencies": {}
+  }
 }

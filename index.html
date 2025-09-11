@@ -571,13 +571,11 @@
                         <label class="form-label" for="file-input">Choose Excel file (.xlsx or .xls)</label>
                         <input type="file" id="file-input" accept=".xlsx,.xls" class="form-control">
                         <p class="text-secondary">Select your GL export and it will be processed automatically.</p>
-                        <button class="btn" id="ms-open-gl">Import from Microsoft 365</button>
                     </div>
 
                     <div id="file-info" class="file-info hidden">
                         <h4>File Information</h4>
                         <div id="file-details"></div>
-                        <button class="btn btn--primary" id="process-btn">Process File</button>
                     </div>
 
                     <div id="mapping-ui" class="card hidden" style="margin-top: 16px;">
@@ -642,32 +640,19 @@
             <div class="card" style="margin-top: 12px;">
                 <div class="card__body">
                     <h2>Import Supporting Documents</h2>
-                    <div style="background:#E0F2FE; color:#0C4A6E; border:2px solid #7DD3FC; padding:12px; border-radius:6px; margin-bottom:12px;">
-                        Linking of receipts/invoices happens in the <strong>Review</strong> tab. Uploaded images are processed with <strong>enhanced Codex OCR</strong> (Tesseract + Azure Form Recognizer) and automatically matched to GL line items using vendor, amount and date.
-                    </div>
                     <p class="text-secondary">Attach receipts/invoices/approvals. A single file may contain multiple items; the system will attempt to split and match them.</p>
                     <div class="form-group">
                         <label class="form-label" for="docs-input">Choose files (.pdf, .docx, .png, .jpg)</label>
                         <input type="file" id="docs-input" accept=".pdf,.docx,.png,.jpg,.jpeg" class="form-control" multiple>
                     </div>
                     <div class="report-actions" style="gap: 8px;">
-                        <button class="btn btn--primary" id="ingest-docs-btn">Upload & Parse</button>
+                        <button class="btn btn--primary" id="ingest-docs-btn">Upload</button>
                         <span id="docs-status" class="text-secondary"></span>
-                        <button class="btn" id="ms-open-docs">Import from Microsoft 365</button>
                     </div>
 
                     <div id="docs-summary" class="text-secondary" style="margin-top: 12px;"></div>
                     <div id="upload-report" class="text-secondary" style="margin-top: 6px; color:#059669;"></div>
                     <div id="docs-class-list" style="margin-top: 12px;"></div>
-                    <div style="margin-top: 16px;">
-                        <h3>Attachments</h3>
-                        <p class="text-secondary">Images and files that are not classified as receipts or invoices.</p>
-                        <div id="attachments-gallery" class="attachments-grid"></div>
-                    </div>
-                    <div id="docs-dropzone" style="margin-top: 12px; border: 2px dashed #94A3B8; border-radius: 8px; padding: 16px; text-align: center; color: #475569;">
-                        Drag & drop receipts/invoices here (PDF, PNG, JPG, DOCX).
-                        <div class="text-secondary" style="margin-top: 4px;">Large batches are uploaded in chunks automatically.</div>
-                    </div>
                 </div>
             </div>
 
@@ -814,25 +799,21 @@
                 </div>
             </div>
 
-            <!-- Unmatched & Linking -->
-            <div class="card" style="margin-top: 12px;">
-                <div class="card__body">
-                    <h3>Unmatched Items Requiring Receipts/Approvals</h3>
-                    <div id="unmatched-list" style="margin-top: 8px;"></div>
-                </div>
-            </div>
 
-            <!-- Quick Link Modal -->
+            <!-- Link Modal -->
             <div id="link-modal" style="display:none; position: fixed; inset: 0; background: rgba(15,23,42,0.7); z-index: 1000; align-items: center; justify-content: center;">
-              <div style="background: #fff; border-radius: 8px; max-width: 720px; width: 96%; box-shadow: 0 20px 50px rgba(0,0,0,0.3);">
-                <div style="padding: 16px 16px 0 16px;"><h3 id="link-title">Link Document</h3></div>
+              <div style="background: #fff; border-radius: 8px; max-width: 800px; width: 96%; box-shadow: 0 20px 50px rgba(0,0,0,0.3);">
+                <div style="padding: 16px 16px 0 16px;"><h3 id="link-title">Attach/Detach Images</h3></div>
                 <div style="padding: 8px 16px 16px 16px;">
-                  <input type="text" id="link-search" class="form-control" placeholder="Search vendor/date/amount" />
-                  <div id="link-list" style="margin-top: 8px; max-height: 300px; overflow: auto;"></div>
+                  <input type="text" id="link-search" class="form-control" placeholder="Search images by name, vendor, or date" />
+                  <div id="link-images-grid" style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; max-height: 400px; overflow: auto; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px;">
+                    <!-- Images will be populated here with checkboxes for attach/detach -->
+                  </div>
+                  <p class="text-secondary" style="margin-top: 8px; font-size: 13px;">Select multiple images to attach or uncheck to detach from this GL item.</p>
                 </div>
                 <div style="display:flex; gap:8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
                   <button class="btn btn--outline" id="link-cancel">Cancel</button>
-                  <button class="btn btn--primary" id="link-ok">Link Selected</button>
+                  <button class="btn btn--primary" id="link-ok">Save Changes</button>
                 </div>
               </div>
             </div>

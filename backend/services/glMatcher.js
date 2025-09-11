@@ -1,4 +1,4 @@
-import fuzz from 'fuzzball';
+import * as fuzz from 'fuzzball';
 import moment from 'moment';
 
 function calculateMatchScore(extractedData, glEntry) {

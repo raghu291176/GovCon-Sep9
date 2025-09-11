@@ -70,9 +70,13 @@ Notes:
 
 ## Codex Document Processing
 
-New advanced document processing workflow available at `/api/document-processing/`:
+Enhanced advanced document processing workflow available at `/api/document-processing/` with new Azure AI Vision integration:
 
-### Features
+### Enhanced Features
+- **🆕 Azure AI Vision Object Detection** - Automatically detects and locates multiple receipts within a single image
+- **🆕 Intelligent Image Cropping** - Extracts individual receipt regions using Sharp.js for optimal OCR processing
+- **🆕 Multi-Receipt Processing** - Processes multiple receipts found in a single image/PDF page
+- **🆕 Enhanced PDF Support** - Converts PDF pages to images before receipt detection and cropping
 - Multi-stage OCR processing with intelligent routing
 - Support for receipts, invoices, and general documents
 - Fuzzy string matching for vendor/merchant names
@@ -80,10 +84,23 @@ New advanced document processing workflow available at `/api/document-processing
 - Confidence scoring and discrepancy identification
 - Batch processing capabilities
 
+### Processing Flow (Enhanced)
+1. **Input Analysis**: Image/PDF analyzed by Azure AI Vision for receipt object detection
+2. **Receipt Detection**: If receipts are detected, bounding boxes are extracted
+3. **Image Cropping**: Each detected receipt region is cropped using Sharp.js with quality optimizations
+4. **Classification**: Tesseract OCR classifies each cropped receipt as "receipt", "invoice", or "other"
+5. **Extraction**: Each cropped receipt processed through appropriate OCR engine:
+   - Azure Document Intelligence for receipts/invoices
+   - Mistral OCR for other document types
+6. **Aggregation**: Results from all detected receipts are combined with metadata
+7. **Fallback**: If no receipts detected or processing fails, original image processed as before
+
 ### Supported OCR Engines
-1. **Tesseract OCR** - Initial text extraction and document classification
-2. **Azure Form Recognizer** - Specialized processing for receipts and invoices  
-3. **Mistral OCR** - Fallback advanced OCR processing
+1. **🆕 Azure AI Vision** - Receipt object detection and localization
+2. **🆕 Sharp.js** - High-performance image cropping and optimization
+3. **Tesseract OCR** - Initial text extraction and document classification
+4. **Azure AI Document Intelligence** - Specialized processing for receipts and invoices  
+5. **Mistral OCR** - Fallback advanced OCR processing
 
 ### API Endpoints
 - `POST /api/document-processing/process-document` - Process single document
@@ -93,14 +110,53 @@ New advanced document processing workflow available at `/api/document-processing
 
 ### Environment Variables
 ```bash
-# Azure Form Recognizer (Optional but recommended)
-AZURE_FORM_RECOGNIZER_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
-AZURE_FORM_RECOGNIZER_KEY=your-azure-key
+# Azure AI Document Intelligence (Optional but recommended)
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
+AZURE_DOCUMENT_INTELLIGENCE_KEY=your-azure-key
+AZURE_DOCUMENT_INTELLIGENCE_API_VERSION=2024-07-31-preview
+
+# 🆕 Azure AI Vision (For receipt detection - Optional)
+AZURE_VISION_ENDPOINT=https://your-vision-resource.cognitiveservices.azure.com/
+AZURE_VISION_KEY=your-azure-vision-key  
+AZURE_VISION_API_VERSION=2024-02-01
+
+# 🆕 Receipt Detection Configuration
+RECEIPT_DETECTION_CONFIDENCE_THRESHOLD=0.5
+RECEIPT_MIN_BOX_SIZE=100
+MAX_DETECTED_RECEIPTS=10
 
 # Mistral OCR (Optional)
 MISTRAL_OCR_ENDPOINT=https://api.mistral.ai/v1/ocr
 MISTRAL_API_KEY=your-mistral-key
 ```
+
+### Configuration Details
+
+#### Azure AI Vision Setup
+1. Create an Azure Computer Vision resource in your Azure portal
+2. Copy the endpoint URL and subscription key
+3. Set the environment variables above
+4. The system will automatically detect and crop multiple receipts from single images
+
+#### Receipt Detection Parameters
+- `RECEIPT_DETECTION_CONFIDENCE_THRESHOLD`: Minimum confidence (0-1) for receipt detection (default: 0.5)
+- `RECEIPT_MIN_BOX_SIZE`: Minimum bounding box size in pixels (default: 100)
+- `MAX_DETECTED_RECEIPTS`: Maximum number of receipts to process per image (default: 10)
+
+### Example Usage
+
+**Input**: Single image containing multiple receipts (e.g., a photo of several receipts on a table)
+
+**Enhanced Processing**:
+1. Azure AI Vision detects 3 receipt objects with bounding boxes
+2. Sharp.js crops each receipt into separate optimized images
+3. Each cropped receipt processed through OCR pipeline:
+   - Receipt 1: Classified as "receipt" → Azure Document Intelligence → $15.50, Starbucks, 2024-01-15
+   - Receipt 2: Classified as "invoice" → Azure Document Intelligence → $125.00, Office Depot, 2024-01-14  
+   - Receipt 3: Classified as "other" → Mistral OCR → fallback processing
+4. Aggregated result with all receipts, metadata, and best confidence scores
+
+**Fallback**: If Azure Vision not configured or detection fails, processes original image as before
 
 ### Supported File Formats
 - Images: JPEG, PNG, TIFF, BMP
