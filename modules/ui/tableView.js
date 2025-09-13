@@ -71,6 +71,12 @@ export function renderGLTable(data) {
 
   tbody.innerHTML = rows;
 
+  // Helpers to collapse all and activate one row
+  function collapseAll() {
+    tbody.querySelectorAll('tr.gl-row').forEach(r => r.classList.remove('active'));
+    tbody.querySelectorAll('tr.gl-row-details').forEach(d => d.classList.add('hidden'));
+  }
+
   // Bind row toggle once via delegation
   if (!tbody.dataset.toggleBound) {
     tbody.addEventListener('click', (e) => {
@@ -79,11 +85,26 @@ export function renderGLTable(data) {
 
       const rowId = tr.getAttribute('data-row-id');
       const details = tbody.querySelector(`tr.gl-row-details[data-row-id="${rowId}"]`);
-      if (details) {
-        details.classList.toggle('hidden');
+      if (!details) return;
+
+      const willExpand = details.classList.contains('hidden');
+      collapseAll();
+      if (willExpand) {
+        tr.classList.add('active');
+        details.classList.remove('hidden');
       }
     });
     tbody.dataset.toggleBound = 'true';
+  }
+
+  // Global ESC handler to collapse any expanded rows
+  if (!tbody.dataset.escBound) {
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        collapseAll();
+      }
+    });
+    tbody.dataset.escBound = 'true';
   }
 }
 
@@ -190,6 +211,11 @@ const additionalCSS = `
 
 .gl-row:hover {
   background-color: #f9fafb;
+}
+
+.gl-row.active {
+  background-color: #eef2ff;
+  border-left: 4px solid #3b82f6;
 }
 
 .gl-row-details {

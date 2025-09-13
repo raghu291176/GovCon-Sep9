@@ -59,7 +59,8 @@ class FARComplianceApp {
       availableDocuments: [],
       linkedDocumentIds: [],
       selectedDocumentIds: new Set(),
-      previewCache: new Map()
+      previewCache: new Map(),
+      loading: false
     };
   }
 
@@ -87,6 +88,7 @@ class FARComplianceApp {
     this.updateDashboard();
 
     try { await this.updateDocsControlsEnabled(); } catch (_) {}
+    try { await this.updateLLMControlsEnabled(); } catch (_) {}
   }
 
   async loadConfig() {
@@ -187,6 +189,8 @@ class FARComplianceApp {
     if (llmBtn) {
       llmBtn.addEventListener('click', async (e) => {
         e.preventDefault();
+        // If disabled due to offline, do nothing
+        if (llmBtn.disabled) return;
         await this.runLLMReview();
       });
     }
@@ -255,6 +259,50 @@ class FARComplianceApp {
           this.openLinkModal(linkButton.dataset.glId);
         }
       });
+    }
+  }
+
+  async checkServerHealth() {
+    try {
+      if (!this.apiBaseUrl) return false;
+      const url = (this.apiBaseUrl || '').replace(/\/$/, '') + '/api/system/health';
+      const res = await fetch(url, { cache: 'no-store' });
+      return res.ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async updateLLMControlsEnabled() {
+    const llmBtn = document.getElementById('llm-review-btn');
+    if (!llmBtn) return;
+    const online = await this.checkServerHealth();
+    const hasImageAttachment = await this.hasAtLeastOneImageAttachment();
+    const enabled = online && hasImageAttachment;
+    llmBtn.disabled = !enabled;
+    llmBtn.title = enabled ? 'AI Review' : (!online ? 'Server offline: AI Review unavailable' : 'Attach at least one image to a GL item');
+  }
+
+  async hasAtLeastOneImageAttachment() {
+    try {
+      // Prefer server truth if available
+      if (this.apiBaseUrl) {
+        const data = await listDocItems(this.apiBaseUrl);
+        const docsById = new Map((data.documents || []).map(d => [String(d.id), d]));
+        const itemsById = new Map((data.items || []).map(i => [String(i.id), i]));
+        for (const l of (data.links || [])) {
+          const item = itemsById.get(String(l.document_item_id));
+          if (!item) continue;
+          const doc = docsById.get(String(item.document_id));
+          if (doc && typeof doc.mime_type === 'string' && doc.mime_type.startsWith('image/')) return true;
+        }
+        return false;
+      }
+      // Client-side fallback: check current table data
+      const any = (this.glData || []).some(g => Array.isArray(g.linked_documents) && g.linked_documents.length > 0);
+      return !!any;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -345,6 +393,7 @@ class FARComplianceApp {
       
       await this.refreshDocsSummary();
       await this.refreshRequirementsSummary();
+      try { await this.updateLLMControlsEnabled(); } catch (_) {}
     };
 
     if (btn && input) {
@@ -619,7 +668,10 @@ class FARComplianceApp {
     modal.classList.add('show');
     
     this.populateGLItemDetails(glItem);
+    this.documentModal.loading = true;
+    this.renderModalDocuments();
     await this.loadDocumentsAndLinks();
+    this.documentModal.loading = false;
     this.renderModalDocuments();
   }
 
@@ -677,6 +729,16 @@ class FARComplianceApp {
   renderModalDocuments() {
     const container = document.getElementById('available-documents');
     if (!container) return;
+
+    if (this.documentModal.loading) {
+      container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:200px;color:#6b7280;gap:10px;">
+          <span class="spinner" style="width:18px;height:18px;border:2px solid #e5e7eb;border-top-color:#3b82f6;border-radius:50%;display:inline-block;animation:spin 1s linear infinite"></span>
+          <span>Loading documents...</span>
+        </div>
+      `;
+      return;
+    }
 
     const filteredDocs = this.getFilteredModalDocuments();
     
@@ -947,6 +1009,7 @@ class FARComplianceApp {
       }
       
       this.closeLinkModal();
+      try { await this.updateLLMControlsEnabled(); } catch (_) {}
       
     } catch (error) {
       console.error('Error saving link changes:', error);
@@ -1232,6 +1295,14 @@ class FARComplianceApp {
       return;
     }
 
+    // Enforce: must have at least one image attached to a GL item
+    const okAttach = await this.hasAtLeastOneImageAttachment();
+    if (!okAttach) {
+      alert('AI Review requires at least one image attached to a GL line item. Please ingest a receipt/invoice image and ensure it is linked.');
+      try { await this.updateLLMControlsEnabled(); } catch (_) {}
+      return;
+    }
+
     try {
       const btn = document.getElementById('llm-review-btn');
       const orig = btn ? btn.textContent : '';
@@ -1305,11 +1376,7 @@ class FARComplianceApp {
 
   updateDashboard() {
     try {
-      const dataForDashboard = this.auditResults && this.auditResults.length > 0 
-        ? this.auditResults 
-        : this.glData;
-      
-      updateDashboardUI(dataForDashboard, this.auditResults, this.charts);
+      updateDashboardUI(this.auditResults, this.glData, this.charts);
     } catch (error) {
       console.error("Error updating dashboard:", error);
     }
@@ -1401,7 +1468,8 @@ class FARComplianceApp {
         throw new Error('API not configured for document linking');
       }
 
-      await linkDocItem(this.apiBaseUrl, glId, docId);
+      // apiService expects (document_item_id, gl_entry_id)
+      await linkDocItem(this.apiBaseUrl, docId, glId);
       
       const glItem = this.glData.find(g => String(g.id) === String(glId));
       if (glItem) {
@@ -1422,7 +1490,8 @@ class FARComplianceApp {
         throw new Error('API not configured for document unlinking');
       }
 
-      await unlinkDocItem(this.apiBaseUrl, glId, docId);
+      // apiService expects (document_item_id, gl_entry_id)
+      await unlinkDocItem(this.apiBaseUrl, docId, glId);
       
       const glItem = this.glData.find(g => String(g.id) === String(glId));
       if (glItem && glItem.linked_documents) {

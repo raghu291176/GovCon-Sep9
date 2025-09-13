@@ -589,6 +589,24 @@ app.post('/api/llm-review', async (req, res) => {
       console.log('ERROR: Invalid rows array');
       return res.status(400).json({ error: 'rows must be a non-empty array' });
     }
+    // Enforce: At least one image must be attached to a GL item present in rows
+    try {
+      const glIdsInRequest = new Set(rows.map(r => String(r.id || r.gl_entry_id || r.glId || r.gl_id)).filter(Boolean));
+      let hasImage = false;
+      for (const link of memory.glDocLinks || []) {
+        if (!glIdsInRequest.has(String(link.gl_entry_id))) continue;
+        const docItem = (memory.docItems || []).find(i => String(i.id) === String(link.document_item_id));
+        if (!docItem) continue;
+        const doc = (memory.documents || []).find(d => String(d.id) === String(docItem.document_id));
+        if (doc && typeof doc.mime_type === 'string' && doc.mime_type.startsWith('image/')) { hasImage = true; break; }
+      }
+      if (!hasImage) {
+        return res.status(400).json({ error: 'AI review requires at least one image attached to a GL line item in the request.' });
+      }
+    } catch (gateErr) {
+      console.warn('Attachment gate check failed:', gateErr?.message || gateErr);
+      return res.status(400).json({ error: 'AI review requires at least one image attachment.' });
+    }
     console.log('Calling Azure OpenAI with', rows.length, 'rows...');
     const out = await callOpenAICompatible(rows);
     const results = Array.isArray(out?.results) ? out.results : [];
