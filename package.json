@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "FAR Compliance Audit System with Codex Document Processing",
+  "type": "module",
   "scripts": {
     "start": "node backend/server.js",
-    "dev": "nodemon backend/server.js",
-    "postinstall": "npm install --omit=dev --prefix backend"
+    "dev": "nodemon backend/server.js"
   },
   "engines": {
     "node": "20.x"
@@ -14,16 +14,20 @@
   "dependencies": {
     "axios": "^1.0.0",
     "cors": "^2.8.0",
-    "dotenv": "^16.0.0",
-    "express": "^4.18.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "fuzzball": "^2.2.3",
     "moment": "^2.30.1",
-    "multer": "^1.4.0",
+    "multer": "^1.4.5-lts.1",
     "tesseract.js": "^4.1.4",
     "@azure/cognitiveservices-computervision": "^8.2.0",
     "@azure/ms-rest-js": "^2.6.4",
     "sharp": "^0.33.1",
-    "pdf2pic": "^3.1.1"
+    "pdf2pic": "^3.1.1",
+    "mammoth": "^1.8.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "11.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

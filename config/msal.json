@@ -1,6 +1,0 @@
-{
-  "clientId": "YOUR_AZURE_AD_APP_CLIENT_ID",
-  "authority": "https://login.microsoftonline.com/common",
-  "redirectUri": ""
-}
-

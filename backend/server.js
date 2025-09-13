@@ -8,11 +8,13 @@ import { fileURLToPath } from 'url';
 // import pdfParse from 'pdf-parse'; // Temporarily disabled due to module issues
 import mammoth from 'mammoth';
 import { classifyByText, extractApprovalsFromText } from './services/approvals.js';
+import { logger, LogLevel, LogCategory, getLogs, getLogAnalytics, clearOldLogs, getSystemHealth } from './services/logService.js';
 import { scoreMatch, hasUnallowableKeyword } from './services/match.js';
 import { setupSQLite } from './persistence/sqlite.js';
 import { loadAllConfigs as loadFileConfigs, saveConfig as saveFileConfig } from './persistence/fileStore.js';
 import documentRoutes from './routes/documentRoutes.js';
 import { processDocumentWorkflow } from './services/documentWorkflow.js';
+import { initializeAnalyzers } from './services/contentUnderstandingService.js';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -22,12 +24,86 @@ const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.join(__dirname, '..');
 app.use(express.json({ limit: '10mb' }));
 
-// Serve static frontend assets (single-process deployment)
+// Helper function to update GL entries with document data
+function updateGLWithDocumentData(glMatches, documentId, extractedData) {
+  try {
+    console.log(`Updating GL entries with document data from ${documentId}...`);
+    
+    // Only update GL entries for high-confidence matches (primary or strong)
+    const highConfidenceMatches = glMatches.filter(match => 
+      match.match_type === 'primary' || (match.match_type === 'strong' && match.match_score >= 75)
+    );
+    
+    if (highConfidenceMatches.length === 0) {
+      console.log('No high-confidence matches found, GL entries not updated');
+      return;
+    }
+    
+    let updatedCount = 0;
+    
+    for (const match of highConfidenceMatches) {
+      // Find the GL entry in memory
+      const glEntry = memory.glEntries.find(entry => entry.id === match.gl_entry_id);
+      if (!glEntry) {
+        console.warn(`GL entry ${match.gl_entry_id} not found in memory`);
+        continue;
+      }
+      
+      // Update GL entry with document information
+      if (!glEntry.attached_documents) {
+        glEntry.attached_documents = [];
+      }
+      
+      // Add document attachment info
+      const documentAttachment = {
+        document_id: documentId,
+        match_score: match.match_score,
+        match_type: match.match_type,
+        extracted_amount: extractedData.amount,
+        extracted_date: extractedData.date,
+        extracted_merchant: extractedData.merchant,
+        confidence_scores: extractedData.confidence_scores,
+        attached_at: new Date().toISOString()
+      };
+      
+      // Check if document is already attached to avoid duplicates
+      const existingAttachment = glEntry.attached_documents.find(
+        doc => doc.document_id === documentId
+      );
+      
+      if (!existingAttachment) {
+        glEntry.attached_documents.push(documentAttachment);
+        
+        // Mark GL entry as having supporting documentation
+        glEntry.has_supporting_documents = true;
+        glEntry.document_match_score = Math.max(
+          glEntry.document_match_score || 0, 
+          match.match_score
+        );
+        
+        updatedCount++;
+        console.log(`Updated GL entry ${glEntry.id} with document ${documentId} (score: ${match.match_score})`);
+      }
+    }
+    
+    console.log(`Successfully updated ${updatedCount} GL entries with document data`);
+    
+  } catch (error) {
+    console.error('Error updating GL entries with document data:', error);
+  }
+}
+
+// Serve static frontend assets (single-process deployment) 
+app.use(express.static(ROOT_DIR, {
+  setHeaders: (res, path) => {
+    if (path.endsWith('.js')) {
+      res.set('Content-Type', 'application/javascript');
+    }
+  }
+}));
+
+// Fallback route for SPA
 app.get('/', (req, res) => res.sendFile(path.join(ROOT_DIR, 'index.html')));
-app.use('/app.js', express.static(path.join(ROOT_DIR, 'app.js')));
-app.use('/style.css', express.static(path.join(ROOT_DIR, 'style.css')));
-app.use('/modules', express.static(path.join(ROOT_DIR, 'modules')));
-app.use('/config', express.static(path.join(ROOT_DIR, 'config')));
 
 // Document processing routes
 app.use('/api/document-processing', documentRoutes);
@@ -35,10 +111,10 @@ app.use('/api/document-processing', documentRoutes);
 const PERSIST_DIR = process.env.UPLOAD_DIR || '/home/uploads';
 let UPLOAD_DIR = PERSIST_DIR;
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); }
-catch (_) {
+catch (e) {
   // Fallback to local folder for dev environments where /home is not writable
-  UPLOAD_DIR = path.join(__dirname, 'uploads');
-  try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch (_) {}
+  UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
+  try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch (e_inner) { console.error("Failed to create upload directory:", e_inner); }
 }
 app.use('/uploads', express.static(UPLOAD_DIR));
 
@@ -79,8 +155,20 @@ function recomputeAttachmentFlags() {
     const docById = new Map(memory.documents.map(d => [String(d.id), d]));
     for (const e of memory.glEntries) {
       const links = byGl.get(String(e.id)) || [];
-      e.attachmentsCount = links.length;
-      e.hasReceipt = links.length > 0;
+      
+      // Include both traditional links and new attached documents
+      const attachedDocs = Array.isArray(e.attached_documents) ? e.attached_documents.length : 0;
+      const totalAttachments = links.length + attachedDocs;
+      
+      e.attachmentsCount = totalAttachments;
+      e.hasReceipt = totalAttachments > 0 || e.has_supporting_documents === true;
+      
+      // Add document match quality indicator
+      if (e.document_match_score) {
+        e.documentMatchQuality = e.document_match_score >= 85 ? 'high' : 
+                                e.document_match_score >= 70 ? 'medium' : 'low';
+      }
+      
       // Aggregate approvals from linked documents
       let approvalsCount = 0;
       for (const L of links) {
@@ -89,10 +177,23 @@ function recomputeAttachmentFlags() {
         const n = Array.isArray(doc?.approvals) ? doc.approvals.length : 0;
         approvalsCount += n;
       }
+      
+      // Also check for approvals in attached documents
+      if (Array.isArray(e.attached_documents)) {
+        for (const attachedDoc of e.attached_documents) {
+          const doc = docById.get(String(attachedDoc.document_id));
+          if (doc && Array.isArray(doc.approvals)) {
+            approvalsCount += doc.approvals.length;
+          }
+        }
+      }
+      
       e.approvalsCount = approvalsCount;
       e.hasApproval = approvalsCount > 0;
     }
-  } catch (_) {}
+  } catch (err) {
+    console.error("Error in recomputeAttachmentFlags:", err);
+  }
 }
 
 app.get('/api/health', async (req, res) => {
@@ -140,9 +241,54 @@ app.post('/api/gl', async (req, res) => {
         });
         sqlite.insertGLEntries(rows);
       }
-    } catch (_) {}
+    } catch (dbError) {
+      console.error("Failed to persist GL entries to SQLite:", dbError);
+    }
     res.json({ inserted: ids.length, ids });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Delete GL entry by ID
+app.delete('/api/gl/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'ID is required' });
+  
+  try {
+    const initialCount = memory.glEntries.length;
+    memory.glEntries = memory.glEntries.filter(entry => entry.id !== id);
+    const finalCount = memory.glEntries.length;
+    
+    if (initialCount === finalCount) {
+      return res.status(404).json({ error: 'GL entry not found' });
+    }
+    
+    console.log(`Deleted GL entry ${id}`);
+    logger.info(LogCategory.GL_OPERATIONS, `GL entry deleted`, { 
+      deleted_id: id, 
+      remaining_count: finalCount 
+    });
+    res.json({ success: true, deleted: id, remaining: finalCount });
+  } catch (e) {
+    console.error('Error deleting GL entry:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Delete all GL entries
+app.delete('/api/gl', async (req, res) => {
+  try {
+    const deletedCount = memory.glEntries.length;
+    memory.glEntries = [];
+    console.log(`Deleted all GL entries (${deletedCount} entries cleared)`);
+    logger.info(LogCategory.GL_OPERATIONS, `All GL entries cleared`, { 
+      deleted_count: deletedCount,
+      remaining_count: 0 
+    });
+    res.json({ success: true, deleted: deletedCount, remaining: 0 });
+  } catch (e) {
+    console.error('Error clearing all GL entries:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -179,9 +325,12 @@ app.put('/api/config', async (req, res) => {
   try {
     memory.appConfig = value;
     try {
-      if (sqlite) sqlite.saveConfig('app_config', memory.appConfig);
-      else saveFileConfig('app_config', memory.appConfig);
-    } catch (_) {}
+      if (sqlite) {
+        sqlite.saveConfig('app_config', memory.appConfig);
+      } else saveFileConfig('app_config', memory.appConfig);
+    } catch (persistError) {
+      console.error('Failed to persist app config:', persistError);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -434,7 +583,7 @@ app.post('/api/llm-review', async (req, res) => {
     console.log('=== LLM REVIEW REQUEST START ===');
     console.log('Request body:', JSON.stringify(req.body, null, 2));
     const rows = req.body?.rows;
-    console.log('LLM Review - Received rows:', rows?.length, 'rows');
+    console.log('AI Review - Received rows:', rows?.length, 'rows');
     if (rows?.length > 0) console.log('First row sample:', JSON.stringify(rows[0], null, 2));
     if (!Array.isArray(rows) || rows.length === 0) {
       console.log('ERROR: Invalid rows array');
@@ -443,7 +592,7 @@ app.post('/api/llm-review', async (req, res) => {
     console.log('Calling Azure OpenAI with', rows.length, 'rows...');
     const out = await callOpenAICompatible(rows);
     const results = Array.isArray(out?.results) ? out.results : [];
-    console.log('LLM Review - Results:', results.length, 'results', out?.error ? `(warning: ${out.error})` : '');
+    console.log('AI Review - Results:', results.length, 'results', out?.error ? `(warning: ${out.error})` : '');
     console.log('=== LLM REVIEW REQUEST END ===');
     res.json({ results, llm_raw: out.raw, llm_parsed: out.parsed, warning: out.warning || out.error || null, llm_logs: out.logs || [] });
   } catch (e) {
@@ -785,6 +934,11 @@ app.post('/api/docs/ingest', upload.array('files', 10), async (req, res) => {
                 processing_method: codexResult.processing_method 
               }
             }];
+            
+            // Update GL entries with high-confidence matches
+            if (codexResult.gl_matches && codexResult.gl_matches.length > 0) {
+              updateGLWithDocumentData(codexResult.gl_matches, docId, codexResult.extracted_data);
+            }
           }
         } catch (codexError) {
           console.warn('Codex processing failed, falling back to existing methods:', codexError.message);
@@ -1007,7 +1161,98 @@ app.post('/api/docs/ingest', upload.array('files', 10), async (req, res) => {
   }
 });
 
-app.listen(port, () => console.log(`API listening on :${port}`));
+// ===== LOGGING AND ANALYTICS API ROUTES =====
+
+// Get logs with filtering and pagination
+app.get('/api/logs', (req, res) => {
+  try {
+    const options = {
+      level: req.query.level || null,
+      category: req.query.category || null,
+      startDate: req.query.startDate || null,
+      endDate: req.query.endDate || null,
+      limit: parseInt(req.query.limit) || 100,
+      offset: parseInt(req.query.offset) || 0,
+      search: req.query.search || null
+    };
+    
+    const result = getLogs(options);
+    res.json(result);
+  } catch (error) {
+    logger.error(LogCategory.API_REQUEST, 'Failed to get logs', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get log analytics and statistics
+app.get('/api/logs/analytics', (req, res) => {
+  try {
+    const timeRange = req.query.timeRange || '24h';
+    const analytics = getLogAnalytics(timeRange);
+    res.json(analytics);
+  } catch (error) {
+    logger.error(LogCategory.API_REQUEST, 'Failed to get log analytics', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get system health status
+app.get('/api/system/health', (req, res) => {
+  try {
+    const health = getSystemHealth();
+    res.json(health);
+  } catch (error) {
+    logger.error(LogCategory.API_REQUEST, 'Failed to get system health', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Clear old logs (admin endpoint)
+app.post('/api/logs/clear', (req, res) => {
+  try {
+    const retentionDays = parseInt(req.body.retentionDays) || 7;
+    const result = clearOldLogs(retentionDays);
+    logger.info(LogCategory.SYSTEM, 'Log cleanup requested', { 
+      retention_days: retentionDays,
+      cleared_count: result.clearedCount
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error(LogCategory.API_REQUEST, 'Failed to clear logs', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Manual log entry (for testing/debugging)
+app.post('/api/logs', (req, res) => {
+  try {
+    const { level, category, message, metadata = {} } = req.body;
+    
+    if (!level || !category || !message) {
+      return res.status(400).json({ error: 'level, category, and message are required' });
+    }
+    
+    const logEntry = logger[level.toLowerCase()](category, message, metadata);
+    res.json({ success: true, logEntry });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Initialize Content Understanding analyzers on startup
+initializeAnalyzers().catch(err => {
+  console.warn('Content Understanding analyzers initialization failed (service may have limited functionality):', err.message);
+});
+
+app.listen(port, () => {
+  console.log(`API listening on :${port}`);
+  logger.info(LogCategory.SYSTEM, `Server started on port ${port}`, {
+    port,
+    node_version: process.version,
+    platform: process.platform,
+    memory_usage: process.memoryUsage()
+  });
+});
 
 // ---------- Document/Link management ----------
 app.get('/api/docs/items', (req, res) => {
@@ -1067,9 +1312,12 @@ app.put('/api/di-config', express.json(), (req, res) => {
       key: body.clearKey === true ? '' : (typeof body.key === 'string' ? body.key : (memory.di.key || '')),
     };
     try {
-      if (sqlite) sqlite.saveConfig('di_config', memory.di);
-      else saveFileConfig('di_config', memory.di);
-    } catch (_) {}
+      if (sqlite) {
+        sqlite.saveConfig('di_config', memory.di);
+      } else saveFileConfig('di_config', memory.di);
+    } catch (persistError) {
+      console.error('Failed to persist DI config:', persistError);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

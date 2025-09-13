@@ -31,22 +31,6 @@ Important usage note
 
 - You must import GL entries before uploading supporting documents (receipts/invoices/attachments). The UI disables document upload until at least one GL entry exists, and the backend rejects document ingestion without prior GL import.
 
-## Microsoft 365 (OneDrive/SharePoint) Integration
-
-You can sign in with Microsoft and open Excel workbooks directly from your OneDrive/SharePoint.
-
-Configure MSAL:
-
-- Update `config/msal.json` with your Azure AD App values:
-  - `clientId`: Your application (client) ID
-  - `authority`: `https://login.microsoftonline.com/<tenantId>` or `.../common`
-  - `redirectUri`: Optional; defaults to the site origin
-- Required API permissions (delegated): `Files.Read`, `User.Read`, plus `offline_access`, `openid`, `profile`.
-
-Usage:
-- Upload tab → “Microsoft 365 (OneDrive/SharePoint)”
-- Click “Sign in with Microsoft” and then “Search” or “List Recent”
-- Click a workbook row to open; the app auto-detects headers and mapping. If uncertain, a mapping preview UI is shown to confirm columns.
 
 ## Alternate Local Hosting
 
@@ -84,23 +68,20 @@ Enhanced advanced document processing workflow available at `/api/document-proce
 - Confidence scoring and discrepancy identification
 - Batch processing capabilities
 
-### Processing Flow (Enhanced)
-1. **Input Analysis**: Image/PDF analyzed by Azure AI Vision for receipt object detection
-2. **Receipt Detection**: If receipts are detected, bounding boxes are extracted
-3. **Image Cropping**: Each detected receipt region is cropped using Sharp.js with quality optimizations
-4. **Classification**: Tesseract OCR classifies each cropped receipt as "receipt", "invoice", or "other"
-5. **Extraction**: Each cropped receipt processed through appropriate OCR engine:
-   - Azure Document Intelligence for receipts/invoices
-   - Mistral OCR for other document types
-6. **Aggregation**: Results from all detected receipts are combined with metadata
-7. **Fallback**: If no receipts detected or processing fails, original image processed as before
+### Processing Flow (Content Understanding)
+1. **Classification**: Tesseract OCR analyzes the document to classify as "receipt", "invoice", or "other"
+2. **Intelligent Processing**: Documents are routed to appropriate analyzers:
+   - **Receipts**: Microsoft Content Understanding receipt analyzer with custom field extraction
+   - **Invoices**: Microsoft Content Understanding invoice analyzer with vendor/amount detection
+   - **Other**: Azure Foundry Mistral OCR with vision capabilities
+3. **Data Extraction**: High-confidence extraction of amount, date, and merchant/vendor information
+4. **GL Matching**: Intelligent matching to GL entries with confidence scoring
+5. **Automatic Updates**: High-confidence matches automatically update GL entries with document attachments
 
 ### Supported OCR Engines
-1. **🆕 Azure AI Vision** - Receipt object detection and localization
-2. **🆕 Sharp.js** - High-performance image cropping and optimization
-3. **Tesseract OCR** - Initial text extraction and document classification
-4. **Azure AI Document Intelligence** - Specialized processing for receipts and invoices  
-5. **Mistral OCR** - Fallback advanced OCR processing
+1. **Tesseract OCR** - Initial text extraction and document classification
+2. **Microsoft Content Understanding** - Advanced custom analyzers for receipts and invoices with flexible field extraction
+3. **Azure Foundry Mistral** - Advanced OCR processing for other document types
 
 ### API Endpoints
 - `POST /api/document-processing/process-document` - Process single document
@@ -125,9 +106,16 @@ RECEIPT_DETECTION_CONFIDENCE_THRESHOLD=0.5
 RECEIPT_MIN_BOX_SIZE=100
 MAX_DETECTED_RECEIPTS=10
 
-# Mistral OCR (Optional)
-MISTRAL_OCR_ENDPOINT=https://api.mistral.ai/v1/ocr
-MISTRAL_API_KEY=your-mistral-key
+# Microsoft Content Understanding (Recommended - for receipt/invoice processing)
+CONTENT_UNDERSTANDING_ENDPOINT=https://your-content-understanding-resource.cognitiveservices.azure.com
+CONTENT_UNDERSTANDING_KEY=your-content-understanding-key
+CONTENT_UNDERSTANDING_API_VERSION=2025-05-01-preview
+CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID=receipt-analyzer
+CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID=invoice-analyzer
+
+# Azure Foundry Mistral OCR (Optional - for documents classified as 'Other')
+AZURE_FOUNDRY_MISTRAL_ENDPOINT=https://your-foundry-endpoint.azure.com/v1/chat/completions
+AZURE_FOUNDRY_MISTRAL_KEY=your-azure-foundry-key
 ```
 
 ### Configuration Details

@@ -1,8 +1,5 @@
 import axios from 'axios';
-import { azureVisionService } from './azureVisionService.js';
-import { imageCroppingService } from './imageCroppingService.js';
-
-const apiVersion = "2024-07-31-preview";
+import { analyzeDocument as analyzeWithContentUnderstanding } from './contentUnderstandingService.js';
 
 /**
  * Enhanced document processing with Azure AI Vision object detection
@@ -19,50 +16,48 @@ async function processDocument(imageBuffer, tesseractText, options = {}) {
     const processingStartTime = Date.now();
     const extractedText = tesseractText.toLowerCase();
     
-    console.log('Starting enhanced document processing with receipt detection...');
+    console.log('Starting basic document processing with classification...');
     
     try {
-        // Step 1: Attempt receipt detection using Azure AI Vision
-        const detectionResult = await azureVisionService.detectReceiptObjects(imageBuffer, {
-            tesseract_classification: extractedText.includes('receipt') ? 'receipt' : 
-                                    extractedText.includes('invoice') ? 'invoice' : 'unknown'
-        });
+        // Step 1: Classify document using Tesseract OCR result
+        const { classifyOCRContent } = await import('./ocrService.js');
+        const classification = classifyOCRContent({ success: true, rawText: tesseractText });
         
-        // Step 2: Process based on detection results
-        if (detectionResult.success && detectionResult.detections.length > 0) {
-            console.log(`Found ${detectionResult.detections.length} receipt objects, processing each...`);
-            return await processDetectedReceipts(imageBuffer, detectionResult.detections, extractedText, options);
+        console.log(`Document classified as: ${classification.documentType} (confidence: ${classification.confidence})`);
+        
+        // Step 2: Process based on classification using Content Understanding
+        let result;
+        if (classification.documentType === 'receipt') {
+            console.log('Processing as Receipt with Content Understanding...');
+            const receiptAnalyzerId = process.env.CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID || 'receipt-analyzer';
+            result = await analyzeWithContentUnderstanding(receiptAnalyzerId, imageBuffer);
+        } else if (classification.documentType === 'invoice') {
+            console.log('Processing as Invoice with Content Understanding...');
+            const invoiceAnalyzerId = process.env.CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID || 'invoice-analyzer';
+            result = await analyzeWithContentUnderstanding(invoiceAnalyzerId, imageBuffer);
         } else {
-            // Step 3: No detections found, fall back to original processing logic
-            console.log('No receipt objects detected, falling back to original processing...');
-            return await processOriginalImage(imageBuffer, extractedText, {
-                ...options,
-                fallback_reason: detectionResult.error || 'no_detections_found',
-                detection_attempted: true
-            });
+            console.log('Processing as Other document with Azure Foundry Mistral OCR...');
+            result = await processWithMistralOCR(imageBuffer);
         }
+        
+        // Add classification metadata to result
+        if (result.success) {
+            result.classification = classification;
+            result.processing_time_ms = Date.now() - processingStartTime;
+        }
+        
+        return result;
         
     } catch (error) {
         const processingTime = Date.now() - processingStartTime;
-        console.error('Enhanced document processing failed, falling back to original:', error.message);
+        console.error('Document processing failed:', error.message);
         
-        // Fallback to original processing on any error
-        try {
-            return await processOriginalImage(imageBuffer, extractedText, {
-                ...options,
-                fallback_reason: error.message,
-                detection_attempted: true,
-                processing_time_detection_ms: processingTime
-            });
-        } catch (fallbackError) {
-            // If even fallback fails, return error
-            return {
-                method: 'enhanced_processing_failed',
-                success: false,
-                error: `Both enhanced and fallback processing failed: ${error.message}, ${fallbackError.message}`,
-                processing_time_ms: Date.now() - processingStartTime
-            };
-        }
+        return {
+            method: 'classification_processing_failed',
+            success: false,
+            error: error.message,
+            processing_time_ms: processingTime
+        };
     }
 }
 
@@ -219,249 +214,167 @@ async function processOriginalImage(imageBuffer, extractedText, options = {}) {
     return result;
 }
 
-async function processWithDocumentIntelligenceReceipt(imageBuffer) {
-    if (!process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT || !process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY) {
-        return {
-            method: 'document_intelligence_receipt',
-            success: false,
-            error: 'Azure Document Intelligence not configured'
-        };
-    }
-    
-    try {
-        const endpoint = process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT.replace(/\/$/, '');
-        const analyzeUrl = `${endpoint}/formrecognizer/documentModels/prebuilt-receipt:analyze?api-version=${apiVersion}`;
-        
-        // Start the analysis
-        const analyzeResponse = await axios.post(analyzeUrl, imageBuffer, {
-            headers: {
-                'Content-Type': 'application/octet-stream',
-                'Ocp-Apim-Subscription-Key': process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY
-            }
-        });
-        
-        // Get the operation location from the response headers
-        const operationLocation = analyzeResponse.headers['operation-location'];
-        if (!operationLocation) {
-            throw new Error('No operation location returned from Document Intelligence');
-        }
-        
-        // Poll for results
-        let result;
-        let attempts = 0;
-        const maxAttempts = 30;
-        
-        while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-            
-            const resultResponse = await axios.get(operationLocation, {
-                headers: {
-                    'Ocp-Apim-Subscription-Key': process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY
-                }
-            });
-            
-            if (resultResponse.data.status === 'succeeded') {
-                result = resultResponse.data;
-                break;
-            } else if (resultResponse.data.status === 'failed') {
-                throw new Error(`Analysis failed: ${resultResponse.data.error?.message || 'Unknown error'}`);
-            }
-            
-            attempts++;
-        }
-        
-        if (!result || result.status !== 'succeeded') {
-            throw new Error('Analysis timed out or failed');
-        }
-        
-        return {
-            method: 'document_intelligence_receipt',
-            success: true,
-            data: await extractReceiptData(result)
-        };
-        
-    } catch (error) {
-        console.error('Document Intelligence Receipt Processing Error:', error);
-        return {
-            method: 'document_intelligence_receipt',
-            success: false,
-            error: error.message
-        };
-    }
-}
+// Removed: processWithDocumentIntelligenceReceipt - replaced with Content Understanding
 
-async function processWithDocumentIntelligenceInvoice(imageBuffer) {
-    if (!process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT || !process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY) {
-        return {
-            method: 'document_intelligence_invoice',
-            success: false,
-            error: 'Azure Document Intelligence not configured'
-        };
-    }
-    
-    try {
-        const endpoint = process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT.replace(/\/$/, '');
-        const analyzeUrl = `${endpoint}/formrecognizer/documentModels/prebuilt-invoice:analyze?api-version=${apiVersion}`;
-        
-        // Start the analysis
-        const analyzeResponse = await axios.post(analyzeUrl, imageBuffer, {
-            headers: {
-                'Content-Type': 'application/octet-stream',
-                'Ocp-Apim-Subscription-Key': process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY
-            }
-        });
-        
-        // Get the operation location from the response headers
-        const operationLocation = analyzeResponse.headers['operation-location'];
-        if (!operationLocation) {
-            throw new Error('No operation location returned from Document Intelligence');
-        }
-        
-        // Poll for results
-        let result;
-        let attempts = 0;
-        const maxAttempts = 30;
-        
-        while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-            
-            const resultResponse = await axios.get(operationLocation, {
-                headers: {
-                    'Ocp-Apim-Subscription-Key': process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY
-                }
-            });
-            
-            if (resultResponse.data.status === 'succeeded') {
-                result = resultResponse.data;
-                break;
-            } else if (resultResponse.data.status === 'failed') {
-                throw new Error(`Analysis failed: ${resultResponse.data.error?.message || 'Unknown error'}`);
-            }
-            
-            attempts++;
-        }
-        
-        if (!result || result.status !== 'succeeded') {
-            throw new Error('Analysis timed out or failed');
-        }
-        
-        return {
-            method: 'document_intelligence_invoice',
-            success: true,
-            data: await extractInvoiceData(result)
-        };
-        
-    } catch (error) {
-        console.error('Document Intelligence Invoice Processing Error:', error);
-        return {
-            method: 'document_intelligence_invoice',
-            success: false,
-            error: error.message
-        };
-    }
-}
+// Removed: processWithDocumentIntelligenceInvoice - replaced with Content Understanding
 
 async function processWithMistralOCR(imageBuffer) {
-    if (!process.env.MISTRAL_OCR_ENDPOINT || !process.env.MISTRAL_API_KEY) {
+    if (!process.env.AZURE_FOUNDRY_MISTRAL_ENDPOINT || !process.env.AZURE_FOUNDRY_MISTRAL_KEY) {
         return {
-            method: 'mistral_ocr',
+            method: 'azure_foundry_mistral_ocr',
             success: false,
-            error: 'Mistral OCR not configured'
+            error: 'Azure Foundry Mistral OCR not configured (AZURE_FOUNDRY_MISTRAL_ENDPOINT and AZURE_FOUNDRY_MISTRAL_KEY required)'
         };
     }
     
     try {
-        const response = await axios.post(process.env.MISTRAL_OCR_ENDPOINT, {
-            image: imageBuffer.toString('base64'),
+        console.log('Processing with Azure Foundry Mistral OCR...');
+        
+        // Azure Foundry API call format
+        const response = await axios.post(process.env.AZURE_FOUNDRY_MISTRAL_ENDPOINT, {
+            model: "mistral-ocr", // or the specific model name
+            messages: [{
+                role: "user",
+                content: [
+                    {
+                        type: "text", 
+                        text: "Extract the amount, date, and merchant/vendor name from this document. Return in JSON format with fields: amount, date, merchant."
+                    },
+                    {
+                        type: "image_url",
+                        image_url: {
+                            url: `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
+                        }
+                    }
+                ]
+            }],
+            max_tokens: 500,
+            temperature: 0.1
         }, {
             headers: {
-                'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
+                'Authorization': `Bearer ${process.env.AZURE_FOUNDRY_MISTRAL_KEY}`,
                 'Content-Type': 'application/json'
             },
-            timeout: 30000
+            timeout: 60000
         });
         
+        console.log('Azure Foundry Mistral OCR completed successfully');
+        
         return {
-            method: 'mistral_ocr',
+            method: 'azure_foundry_mistral_ocr',
             success: true,
             data: extractMistralData(response.data)
         };
     } catch (error) {
-        console.error('Mistral OCR Processing Error:', error);
+        console.error('Azure Foundry Mistral OCR Processing Error:', error);
         return {
-            method: 'mistral_ocr',
+            method: 'azure_foundry_mistral_ocr',
             success: false,
             error: error.message
         };
     }
 }
 
-async function extractReceiptData(diResult) {
-    const { extractAmount, extractDate, extractMerchant } = await import('./dataExtraction.js');
-    
-    if (!diResult.analyzeResult?.documents || diResult.analyzeResult.documents.length === 0) {
-        return {
-            amount: { value: null, confidence: 0 },
-            date: { value: null, confidence: 0 },
-            merchant: { value: null, confidence: 0 }
-        };
-    }
-    
-    const receipt = diResult.analyzeResult.documents[0];
-    const fields = receipt.fields || {};
-    
-    return {
-        amount: extractAmount(fields),
-        date: extractDate(fields),
-        merchant: extractMerchant(fields),
-        confidence: calculateConfidence(fields)
-    };
-}
-
-async function extractInvoiceData(diResult) {
-    const { extractAmount, extractDate, extractVendor } = await import('./dataExtraction.js');
-    
-    if (!diResult.analyzeResult?.documents || diResult.analyzeResult.documents.length === 0) {
-        return {
-            amount: { value: null, confidence: 0 },
-            date: { value: null, confidence: 0 },
-            merchant: { value: null, confidence: 0 }
-        };
-    }
-    
-    const invoice = diResult.analyzeResult.documents[0];
-    const fields = invoice.fields || {};
-    
-    return {
-        amount: extractAmount(fields),
-        date: extractDate(fields),
-        merchant: extractVendor(fields),
-        confidence: calculateConfidence(fields)
-    };
-}
+// Removed: extractReceiptData and extractInvoiceData - Content Understanding handles extraction internally
 
 function extractMistralData(mistralResponse) {
+    try {
+        // Azure Foundry Mistral returns response in OpenAI format
+        const content = mistralResponse?.choices?.[0]?.message?.content;
+        if (!content) {
+            console.warn('No content found in Mistral response');
+            return {
+                amount: { value: null, confidence: 0 },
+                date: { value: null, confidence: 0 },
+                merchant: { value: null, confidence: 0 },
+                confidence: 0
+            };
+        }
+
+        // Try to parse JSON from the response
+        let extractedData;
+        try {
+            extractedData = JSON.parse(content);
+        } catch (parseError) {
+            // If not valid JSON, try to extract information with regex
+            console.log('Failed to parse JSON, attempting regex extraction');
+            extractedData = extractWithRegex(content);
+        }
+
+        // Normalize the extracted data
+        const normalizedAmount = normalizeAmount(extractedData.amount);
+        const normalizedDate = normalizeDate(extractedData.date);
+        const normalizedMerchant = normalizeMerchant(extractedData.merchant);
+
+        // Calculate confidence based on how many fields were successfully extracted
+        const extractedFields = [normalizedAmount.value, normalizedDate.value, normalizedMerchant.value].filter(v => v !== null).length;
+        const overallConfidence = extractedFields / 3; // 3 fields total
+
+        return {
+            amount: normalizedAmount,
+            date: normalizedDate, 
+            merchant: normalizedMerchant,
+            confidence: overallConfidence
+        };
+
+    } catch (error) {
+        console.error('Error extracting Mistral data:', error);
+        return {
+            amount: { value: null, confidence: 0 },
+            date: { value: null, confidence: 0 },
+            merchant: { value: null, confidence: 0 },
+            confidence: 0
+        };
+    }
+}
+
+function extractWithRegex(content) {
+    // Fallback regex extraction if JSON parsing fails
+    const amountMatch = content.match(/(?:amount|total|sum)[:\s]*\$?([0-9]+\.?[0-9]*)/i);
+    const dateMatch = content.match(/(?:date)[:\s]*([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i);
+    const merchantMatch = content.match(/(?:merchant|vendor|company)[:\s]*([a-zA-Z0-9\s]+)/i);
+
     return {
-        amount: { value: null, confidence: 0 },
-        date: { value: null, confidence: 0 },
-        merchant: { value: null, confidence: 0 },
-        confidence: 0
+        amount: amountMatch ? amountMatch[1] : null,
+        date: dateMatch ? dateMatch[1] : null,
+        merchant: merchantMatch ? merchantMatch[1].trim() : null
     };
 }
 
-function calculateConfidence(fields) {
-    const confidences = Object.values(fields)
-        .filter(field => field && field.confidence)
-        .map(field => field.confidence);
+function normalizeAmount(amount) {
+    if (!amount) return { value: null, confidence: 0 };
     
-    if (confidences.length === 0) return 0;
+    const numericAmount = parseFloat(amount.toString().replace(/[^0-9.]/g, ''));
+    if (isNaN(numericAmount)) return { value: null, confidence: 0 };
     
-    return confidences.reduce((sum, conf) => sum + conf, 0) / confidences.length;
+    return { value: numericAmount, confidence: 0.7 }; // Medium confidence for Mistral extractions
 }
+
+function normalizeDate(date) {
+    if (!date) return { value: null, confidence: 0 };
+    
+    try {
+        const parsedDate = new Date(date);
+        if (isNaN(parsedDate)) return { value: null, confidence: 0 };
+        
+        return { value: parsedDate.toISOString().split('T')[0], confidence: 0.6 }; // Lower confidence for dates
+    } catch (error) {
+        return { value: null, confidence: 0 };
+    }
+}
+
+function normalizeMerchant(merchant) {
+    if (!merchant) return { value: null, confidence: 0 };
+    
+    const cleanMerchant = merchant.toString().trim().replace(/[^\w\s]/g, '').substring(0, 50);
+    if (cleanMerchant.length === 0) return { value: null, confidence: 0 };
+    
+    return { value: cleanMerchant, confidence: 0.5 }; // Lower confidence for merchant names from OCR
+}
+
+// Removed: calculateConfidence - Content Understanding provides confidence internally
 
 export {
     processDocument,
-    processWithDocumentIntelligenceReceipt,
-    processWithDocumentIntelligenceInvoice,
     processWithMistralOCR
 };

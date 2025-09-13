@@ -31,7 +31,7 @@ export function renderGLTable(data) {
           ${item.hasReceipt ? '<span title="Receipt linked">📄</span>' : ''}
         </td>
         <td>
-          ${item.id ? `<button class="quick-link" onclick="openLinkModal('${item.id}')" title="Link Documents">Quick Link</button>` : ''}
+          ${item.id ? `<button class="quick-link" data-gl-id="${item.id}" title="Link Documents">Quick Link</button>` : ''}
         </td>
         <td>${item.approvalState || ''}</td>
         <td class="far-issue">${reason || 'Not audited'}</td>

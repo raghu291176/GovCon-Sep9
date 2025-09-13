@@ -3,10 +3,10 @@
 
 import { auditAll } from "./modules/services/auditService.js";
 import { readExcelFile, mapExcelRows, readExcelAsAOA, mapRowsFromAOA, detectHeaderRow } from "./modules/services/excelService.js";
-import { MicrosoftClient } from "./modules/services/microsoftService.js";
 import { renderGLTable, filterData } from "./modules/ui/tableView.js";
 import { updateDashboard as updateDashboardUI } from "./modules/ui/dashboard.js";
 import { generateReport as genReport, exportToPDF as exportPDF } from "./modules/reports/reportService.js";
+import { renderLogDashboard, initializeLogDashboard, destroyLogDashboard } from "./modules/ui/logDashboard.js";
 
 import {
   saveGLEntries,
@@ -52,10 +52,6 @@ class FARComplianceApp {
       rows: [],
       map: new Map()
     };
-    this.msal = {
-      client: null,
-      cfg: null
-    };
 
     // Add document modal properties
     this.documentModal = {
@@ -71,7 +67,6 @@ class FARComplianceApp {
     await this.loadConfig();
     this.setupEventListeners();
     this.setupFileUpload();
-    this.setupMicrosoftUI();
     this.setupDocsUI();
     this.setupAdminUI();
 
@@ -79,6 +74,8 @@ class FARComplianceApp {
     this.setupDocumentModal();
 
     try {
+      // Load existing GL data from server if available
+      await this.loadExistingGLData();
       await this.refreshDocsSummary();
       await this.refreshRequirementsSummary();
       this.renderGLTable();
@@ -114,18 +111,47 @@ class FARComplianceApp {
       if (cfgRes.ok) {
         const cfg = await cfgRes.json();
         if (cfg.apiBaseUrl) this.apiBaseUrl = cfg.apiBaseUrl;
-        if (cfg.msal) this.msal.cfg = cfg.msal;
       }
 
       if (!this.apiBaseUrl) this.apiBaseUrl = window.location.origin;
 
-      try {
-        const ms = await fetch('./config/msal.json');
-        if (ms.ok) this.msal.cfg = await ms.json();
-      } catch (_) {}
-
     } catch (e) {
       console.warn('Failed to load config. Using defaults.', e);
+    }
+  }
+
+  async loadExistingGLData() {
+    try {
+      if (this.apiBaseUrl) {
+        console.log('Loading existing GL data from server...');
+        const result = await fetchGLEntries(this.apiBaseUrl, 1000, 0);
+        if (result && Array.isArray(result.rows) && result.rows.length > 0) {
+          this.glData = result.rows.map(row => ({
+            id: row.id,
+            accountNumber: row.account_number,
+            description: row.description,
+            amount: row.amount,
+            date: row.date,
+            category: row.category,
+            vendor: row.vendor,
+            contractNumber: row.contract_number,
+            attachmentsCount: row.attachmentsCount || 0,
+            hasReceipt: row.hasReceipt || false,
+            approvalsCount: row.approvalsCount || 0,
+            hasApproval: row.hasApproval || false,
+            docSummary: row.doc_summary,
+            docFlagUnallowable: row.doc_flag_unallowable
+          }));
+          console.log(`Loaded ${this.glData.length} existing GL entries from server`);
+          
+          // Run initial audit if FAR rules are loaded
+          if (this.farRules && this.farRules.length > 0) {
+            this.runInitialAudit();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load existing GL data:', e);
     }
   }
 
@@ -141,8 +167,10 @@ class FARComplianceApp {
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const tabName = e.target.getAttribute("data-tab");
-        this.switchTab(tabName);
+        // Use the button that owns the handler, not the inner clicked node
+        const ownerBtn = e.currentTarget || e.target.closest('.tab-btn');
+        const tabName = ownerBtn ? ownerBtn.getAttribute("data-tab") : null;
+        if (tabName) this.switchTab(tabName);
       });
     });
 
@@ -163,6 +191,22 @@ class FARComplianceApp {
       });
     }
 
+    const processGLBtn = document.getElementById("process-gl-btn");
+
+    if (processGLBtn) {
+      processGLBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (this.uploadedFile) {
+          this.processUploadedFile();
+        } else if (this.glData && this.glData.length > 0) {
+          this.runAudit();
+          this.switchTab("review");
+        } else {
+          alert("Please select an Excel file first or ensure GL data is loaded.");
+        }
+      });
+    }
+
     const pendingOnlyEl = document.getElementById('pending-only');
     if (pendingOnlyEl && !pendingOnlyEl.dataset.bound) {
       pendingOnlyEl.addEventListener('change', () => this.filterTable());
@@ -177,7 +221,11 @@ class FARComplianceApp {
     }
 
     if (searchInput) {
-      searchInput.addEventListener("input", () => this.filterTable());
+      if (!this._debouncedFilter) {
+        this._debouncedFilter = this.debounce(() => this.filterTable(), 200);
+      }
+      // Use debounced input to avoid excessive re-rendering while typing
+      searchInput.addEventListener("input", this._debouncedFilter);
     }
 
     const generateReportBtn = document.getElementById("generate-report-btn");
@@ -196,12 +244,31 @@ class FARComplianceApp {
         this.exportToPDF();
       });
     }
+
+    const glTable = document.getElementById("gl-table");
+    if (glTable) {
+      glTable.addEventListener("click", (e) => {
+        // Find the button that was clicked, if any
+        const linkButton = e.target.closest(".quick-link");
+        if (linkButton && linkButton.dataset.glId) {
+          e.preventDefault();
+          this.openLinkModal(linkButton.dataset.glId);
+        }
+      });
+    }
+  }
+
+  // Utility: debounce a function call
+  debounce(fn, delay = 200) {
+    let timer = null;
+    return (...args) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), delay);
+    };
   }
 
   setupFileUpload() {
     const fileInput = document.getElementById("file-input");
-    const processGLBtn = document.getElementById("process-gl-btn");
-    const executeFARBtn = document.getElementById("execute-far-btn");
 
     if (!fileInput) return;
 
@@ -210,264 +277,8 @@ class FARComplianceApp {
         this.handleFileUpload(e.target.files[0]);
       }
     });
-
-    if (processGLBtn) {
-      processGLBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (this.uploadedFile) {
-          this.processUploadedFile();
-        } else {
-          alert("Please select an Excel file first.");
-        }
-      });
-    }
-
-    if (executeFARBtn) {
-      executeFARBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (this.glData && this.glData.length > 0) {
-          this.runAudit();
-        } else {
-          alert("Please upload and process a GL spreadsheet first.");
-        }
-      });
-    }
   }
 
-  setupMicrosoftUI() {
-    try {
-      const loginBtn = document.getElementById('ms-login-btn');
-      const logoutBtn = document.getElementById('ms-logout-btn');
-      const status = document.getElementById('ms-status');
-      const searchBtn = document.getElementById('ms-search-btn');
-      const recentBtn = document.getElementById('ms-recent-btn');
-      const importBtn = document.getElementById('ms-import-btn');
-      const selectAllBtn = document.getElementById('ms-select-all');
-      const browseBtn = document.getElementById('ms-browse-btn');
-      const upBtn = document.getElementById('ms-folder-up');
-      const pathSpan = document.getElementById('ms-path');
-      const filesHost = document.getElementById('ms-files');
-
-      const cfg = this.msal.cfg || {};
-      const setStatus = (msg) => { if (status) status.textContent = msg || ''; };
-
-      if (!cfg.clientId) {
-        setStatus('MSAL not configured (missing clientId).');
-        return;
-      }
-
-      this.msal.client = new MicrosoftClient({
-        clientId: cfg.clientId,
-        authority: cfg.authority,
-        redirectUri: cfg.redirectUri
-      });
-
-      try { this.msal.client.init(); } catch (_) {}
-
-      let msCurrentItems = [];
-      this.msal.mode = 'all';
-      let msNav = [];
-
-      const setPath = () => {
-        if (pathSpan) pathSpan.textContent = '/' + (msNav.map(n => n.name).join('/') || '');
-      };
-
-      const renderList = (items) => {
-        if (!filesHost) return;
-        msCurrentItems = items || [];
-        
-        if (!msCurrentItems.length) {
-          filesHost.style.display = 'none';
-          filesHost.innerHTML = '';
-          return;
-        }
-
-        const rows = msCurrentItems.map((it, idx) => {
-          const name = it.name || '';
-          const web = it.webUrl || '';
-          const isFolder = !!it.folder;
-          const ext = isFolder ? 'folder' : ((name.split('.').pop() || '').toLowerCase());
-          const pick = isFolder ? '' : `<input type="checkbox" data-idx="${idx}">`;
-          
-          return `<tr>
-            <td>${pick}</td>
-            <td><a href="${web}" target="_blank" rel="noopener">${name}</a></td>
-            <td>${isFolder ? '📁' : ext}</td>
-            <td>${isFolder ? '' : (it.size ? Math.round(it.size / 1024) + ' KB' : '')}</td>
-          </tr>`;
-        }).join('');
-
-        filesHost.innerHTML = `
-          <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-              <tr style="background: #f5f5f5;">
-                <th style="padding: 8px; text-align: left;">Select</th>
-                <th style="padding: 8px; text-align: left;">Name</th>
-                <th style="padding: 8px; text-align: left;">Type</th>
-                <th style="padding: 8px; text-align: left;">Size</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        `;
-        filesHost.style.display = '';
-
-        filesHost.addEventListener('click', (e) => {
-          const row = e.target.closest('tr');
-          if (!row) return;
-          
-          const link = row.querySelector('a');
-          if (e.target === link) return;
-          
-          const idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-          if (idx < 0 || idx >= msCurrentItems.length) return;
-          
-          const item = msCurrentItems[idx];
-          if (item.folder) {
-            msNav.push({ id: item.id, name: item.name });
-            setPath();
-            browseFolder(item.id);
-          }
-        });
-      };
-
-      const browseFolder = async (folderId) => {
-        try {
-          setStatus('Loading folder...');
-          const items = await this.msal.client.listFiles(folderId);
-          renderList(items);
-          setStatus('');
-        } catch (err) {
-          setStatus('Error: ' + (err.message || err));
-        }
-      };
-
-      const browseRoot = async () => {
-        try {
-          setStatus('Loading root...');
-          const items = await this.msal.client.listFiles();
-          msNav = [];
-          setPath();
-          renderList(items);
-          setStatus('');
-        } catch (err) {
-          setStatus('Error: ' + (err.message || err));
-        }
-      };
-
-      if (loginBtn) {
-        loginBtn.addEventListener('click', async () => {
-          try {
-            setStatus('Signing in...');
-            await this.msal.client.signIn();
-            setStatus('Signed in successfully.');
-            if (browseBtn) browseBtn.style.display = '';
-            if (logoutBtn) logoutBtn.style.display = '';
-            if (loginBtn) loginBtn.style.display = 'none';
-          } catch (err) {
-            setStatus('Sign-in failed: ' + (err.message || err));
-          }
-        });
-      }
-
-      if (logoutBtn) {
-        logoutBtn.addEventListener('click', async () => {
-          try {
-            await this.msal.client.signOut();
-            setStatus('Signed out.');
-            if (browseBtn) browseBtn.style.display = 'none';
-            if (logoutBtn) logoutBtn.style.display = 'none';
-            if (loginBtn) loginBtn.style.display = '';
-            if (filesHost) {
-              filesHost.style.display = 'none';
-              filesHost.innerHTML = '';
-            }
-          } catch (err) {
-            setStatus('Sign-out failed: ' + (err.message || err));
-          }
-        });
-      }
-
-      if (browseBtn) {
-        browseBtn.addEventListener('click', browseRoot);
-      }
-
-      if (upBtn) {
-        upBtn.addEventListener('click', () => {
-          if (msNav.length > 0) {
-            msNav.pop();
-            setPath();
-            if (msNav.length === 0) {
-              browseRoot();
-            } else {
-              browseFolder(msNav[msNav.length - 1].id);
-            }
-          }
-        });
-      }
-
-      if (selectAllBtn) {
-        selectAllBtn.addEventListener('click', () => {
-          const checkboxes = filesHost.querySelectorAll('input[type="checkbox"]');
-          const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-          checkboxes.forEach(cb => cb.checked = !allChecked);
-        });
-      }
-
-      if (importBtn) {
-        importBtn.addEventListener('click', async () => {
-          const checkboxes = filesHost.querySelectorAll('input[type="checkbox"]:checked');
-          const selected = Array.from(checkboxes).map(cb => {
-            const idx = parseInt(cb.dataset.idx);
-            return msCurrentItems[idx];
-          }).filter(Boolean);
-
-          if (!selected.length) {
-            alert('Please select files to import.');
-            return;
-          }
-
-          try {
-            setStatus('Importing files...');
-            for (const item of selected) {
-              const blob = await this.msal.client.downloadFile(item.id);
-              const file = new File([blob], item.name, { type: blob.type });
-              
-              if (this.msal.mode === 'gl' || (this.msal.mode === 'all' && this.isExcelFile(item.name))) {
-                this.handleFileUpload(file);
-                await this.processUploadedFile();
-              } else {
-                await this.handleDocumentUpload(file);
-              }
-            }
-            setStatus('Import completed.');
-          } catch (err) {
-            setStatus('Import failed: ' + (err.message || err));
-          }
-        });
-      }
-
-      if (this.msal.client && this.msal.client.isSignedIn()) {
-        if (browseBtn) browseBtn.style.display = '';
-        if (logoutBtn) logoutBtn.style.display = '';
-        if (loginBtn) loginBtn.style.display = 'none';
-        setStatus('Already signed in.');
-      } else {
-        if (browseBtn) browseBtn.style.display = 'none';
-        if (logoutBtn) logoutBtn.style.display = 'none';
-        if (loginBtn) loginBtn.style.display = '';
-        setStatus('Not signed in.');
-      }
-
-    } catch (err) {
-      console.warn('Microsoft UI setup failed:', err);
-    }
-  }
-
-  isExcelFile(filename) {
-    const ext = (filename || '').toLowerCase().split('.').pop();
-    return ['xlsx', 'xls', 'csv'].includes(ext);
-  }
 
   setupDocsUI() {
     const input = document.getElementById('docs-input');
@@ -582,38 +393,54 @@ class FARComplianceApp {
 
   setupAdminUI() {
     try {
+      const self = this; // Save reference to class instance
       const s = (msg) => {
         const el = document.getElementById('admin-status');
         if (el) el.textContent = msg || '';
       };
 
       const doCall = async (path) => {
-        if (!this.apiBaseUrl) {
+        if (!self.apiBaseUrl) {
           s('Server not available.');
-          return;
+          throw new Error('Server not available.');
         }
         
-        s('Working...');
-        const url = this.apiBaseUrl.replace(/\/$/, '') + path;
-        const res = await fetch(url, { method: 'DELETE' });
-        if (!res.ok) throw new Error(await res.text().catch(() => 'Failed'));
-        
-        if (path.includes('clear-gl') || path.includes('clear-all')) {
-          this.glData = [];
-          this.auditResults = [];
+        try {
+          s('Working...');
+          const url = this.apiBaseUrl.replace(/\/$/, '') + path;
+          console.log('Delete request to:', url);
+          const res = await fetch(url, { method: 'DELETE' });
+          
+          if (!res.ok) {
+            const errorText = await res.text().catch(() => 'Unknown error');
+            console.error('Delete request failed:', res.status, errorText);
+            throw new Error(`Delete failed (${res.status}): ${errorText}`);
+          }
+          
+          const result = await res.json().catch(() => ({}));
+          console.log('Delete successful:', result);
+          
+          if (path.includes('clear-gl') || path.includes('clear-all')) {
+            self.glData = [];
+            self.auditResults = [];
+          }
+          if (path.includes('clear-docs') || path.includes('clear-all')) {
+            self.docs = { ...self.docs, items: [], links: [], documents: [] };
+          }
+          
+          await self.refreshDocsSummary();
+          await self.refreshRequirementsSummary();
+          self.renderGLTable();
+          self.updateDashboard();
+          await self.renderUnmatchedList();
+          try { await self.updateDocsControlsEnabled(); } catch (_) {}
+          
+          s('Done.');
+        } catch (error) {
+          s('Delete failed.');
+          console.error('doCall error:', error);
+          throw error;
         }
-        if (path.includes('clear-docs') || path.includes('clear-all')) {
-          this.docs = { ...this.docs, items: [], links: [], documents: [] };
-        }
-        
-        await this.refreshDocsSummary();
-        await this.refreshRequirementsSummary();
-        this.renderGLTable();
-        this.updateDashboard();
-        await this.renderUnmatchedList();
-        try { await this.updateDocsControlsEnabled(); } catch (_) {}
-        
-        s('Done.');
       };
 
       const modal = document.getElementById('confirm-modal');
@@ -624,28 +451,61 @@ class FARComplianceApp {
       let pendingAction = null;
 
       const openModal = (title, msg, onOk) => {
+        console.log('Opening modal with title:', title);
         if (titleEl) titleEl.textContent = title || 'Confirm Action';
         if (msgEl) msgEl.textContent = msg || 'Are you sure?';
         pendingAction = onOk || null;
-        if (modal) modal.style.display = 'flex';
+        if (modal) {
+          modal.style.display = '';
+          modal.classList.add('show');
+          console.log('Modal should now be visible, classes:', modal.classList);
+          console.log('Modal style display:', modal.style.display);
+        }
       };
 
       const closeModal = () => {
-        if (modal) modal.style.display = 'none';
+        if (modal) {
+          modal.classList.remove('show');
+        }
       };
 
+      if (modal && !modal.dataset.bound) {
+        modal.addEventListener('click', e => {
+          if (e.target.closest('.modal-close') || e.target === modal) {
+            closeModal();
+          }
+        });
+        modal.dataset.bound = 'true';
+      }
+
       if (okBtn && !okBtn.dataset.bound) {
-        okBtn.addEventListener('click', async () => {
+        console.log('Binding OK button click handler');
+        okBtn.addEventListener('click', async (e) => {
+          console.log('OK button clicked!', e);
+          e.preventDefault();
+          e.stopPropagation();
           const fn = pendingAction;
           pendingAction = null;
           closeModal();
-          if (typeof fn === 'function') await fn();
+          if (typeof fn === 'function') {
+            try {
+              await fn();
+            } catch (err) {
+              console.error('Delete operation failed:', err);
+              s('Delete failed: ' + (err.message || err));
+              alert('Delete failed: ' + (err.message || err));
+            }
+          }
         });
         okBtn.dataset.bound = 'true';
       }
 
       if (cancelBtn && !cancelBtn.dataset.bound) {
-        cancelBtn.addEventListener('click', () => {
+        console.log('Binding Cancel button click handler');
+        cancelBtn.addEventListener('click', (e) => {
+          console.log('Cancel button clicked!', e);
+          e.preventDefault();
+          e.stopPropagation();
           pendingAction = null;
           closeModal();
         });
@@ -699,12 +559,34 @@ class FARComplianceApp {
     const modal = document.getElementById('document-link-modal');
     if (modal) {
       modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
+        if (e.target === modal || e.target.closest('.modal-close')) {
           this.closeLinkModal();
         }
+        if (e.target.closest('#modal-cancel-btn')) {
+          this.closeLinkModal();
+        }
+        if (e.target.closest('#modal-refresh-btn')) {
+          this.refreshModalDocuments();
+        }
+        if (e.target.closest('#modal-save-btn')) {
+          this.saveLinkChanges();
+        }
+        const removeBtn = e.target.closest('.remove-link');
+        if (removeBtn && removeBtn.dataset.docId) {
+          this.removeLinkFromSelection(removeBtn.dataset.docId);
+        }
       });
-    }
 
+      const docListContainer = document.getElementById('available-documents');
+      if (docListContainer) {
+        docListContainer.addEventListener('click', (e) => {
+          const docItem = e.target.closest('.document-item');
+          if (docItem && docItem.dataset.docId) {
+            this.toggleDocumentSelection(docItem.dataset.docId);
+          }
+        });
+      }
+    }
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && modal && modal.style.display !== 'none') {
         this.closeLinkModal();
@@ -733,7 +615,8 @@ class FARComplianceApp {
       return;
     }
     
-    modal.style.display = 'flex';
+    modal.style.display = '';
+    modal.classList.add('show');
     
     this.populateGLItemDetails(glItem);
     await this.loadDocumentsAndLinks();
@@ -743,7 +626,7 @@ class FARComplianceApp {
   closeLinkModal() {
     const modal = document.getElementById('document-link-modal');
     if (modal) {
-      modal.style.display = 'none';
+      modal.classList.remove('show');
     }
     
     this.clearDocumentPreview();
@@ -811,15 +694,14 @@ class FARComplianceApp {
       
       return `
         <div class="document-item ${isSelected ? 'selected' : ''} ${isLinked ? 'linked' : ''}" 
-             data-doc-id="${doc.id}" onclick="app.toggleDocumentSelection('${doc.id}')">
+             data-doc-id="${doc.id}">
           <input type="checkbox" class="document-checkbox" 
-                 ${isSelected ? 'checked' : ''} 
-                 onchange="app.toggleDocumentSelection('${doc.id}')" />
+                 ${isSelected ? 'checked' : ''} />
           <div class="document-info">
             <div class="document-name">${doc.filename}</div>
             <div class="document-meta">
-              ${fileSize} • ${doc.mimetype || 'Unknown type'}
-              ${doc.uploadDate ? `• ${new Date(doc.uploadDate).toLocaleDateString()}` : ''}
+              ${fileSize} - ${doc.mimetype || 'Unknown type'}
+              ${doc.uploadDate ? `- ${new Date(doc.uploadDate).toLocaleDateString()}` : ''}
             </div>
           </div>
           <span class="document-type-badge ${docType}">${docType}</span>
@@ -846,8 +728,8 @@ class FARComplianceApp {
     container.innerHTML = linkedDocs.map(doc => `
       <div class="linked-item">
         <span>${doc.filename}</span>
-        <button class="remove-link" onclick="app.removeLinkFromSelection('${doc.id}')" 
-                title="Remove link">×</button>
+        <button class="remove-link" data-doc-id="${doc.id}"
+                title="Remove link">&times;</button>
       </div>
     `).join('');
   }
@@ -979,11 +861,11 @@ class FARComplianceApp {
       case 'info':
         previewArea.innerHTML = `
           <div class="preview-info" style="padding: 20px; text-align: center;">
-            <div style="font-size: 48px; color: #d1d5db; margin-bottom: 10px;">📄</div>
+            <div style="font-size: 48px; color: #d1d5db; margin-bottom: 10px;">DOC</div>
             <div style="font-weight: 500; margin-bottom: 8px;">${previewData.filename}</div>
             <div style="color: #6b7280; font-size: 14px;">
               ${previewData.mimetype || 'Unknown type'}
-              ${previewData.size ? ` • ${this.formatFileSize(previewData.size)}` : ''}
+              ${previewData.size ? ` - ${this.formatFileSize(previewData.size)}` : ''}
             </div>
             <div style="margin-top: 16px;">
               <a href="${this.getDocumentUrl(doc)}" target="_blank" class="btn btn--outline">
@@ -1120,8 +1002,9 @@ class FARComplianceApp {
   }
 
   async updateDocsControlsEnabled() {
-    const uploadBtn = document.getElementById('upload-docs-btn');
-    const docInput = document.getElementById('doc-input');
+    // Match IDs used in index.html
+    const uploadBtn = document.getElementById('ingest-docs-btn');
+    const docInput = document.getElementById('docs-input');
     
     const hasGL = this.glData && this.glData.length > 0;
     
@@ -1366,9 +1249,9 @@ class FARComplianceApp {
 
       if (btn) btn.textContent = orig;
     } catch (err) {
-      alert('LLM review failed: ' + (err.message || err));
+      alert('AI review failed: ' + (err.message || err));
       const btn = document.getElementById('llm-review-btn');
-      if (btn) btn.textContent = 'LLM Review';
+      if (btn) btn.textContent = 'AI Review';
     }
   }
 
@@ -1449,13 +1332,35 @@ class FARComplianceApp {
 
     if (tabName === "dashboard") {
       this.updateDashboard();
+    } else if (tabName === "logs") {
+      this.initializeLogsTab();
+    }
+  }
+
+  async initializeLogsTab() {
+    try {
+      const container = document.getElementById("log-dashboard-container");
+      if (container) {
+        container.innerHTML = renderLogDashboard();
+        await initializeLogDashboard();
+      }
+    } catch (error) {
+      console.error("Failed to initialize logs tab:", error);
     }
   }
 
   generateReport() {
     try {
-      const report = genReport(this.glData, this.auditResults, this.farRules);
-      
+      const reportOptions = {
+        auditResults: this.auditResults,
+        glData: this.glData,
+        reportTitle: 'FAR Compliance Audit Report',
+        contractNumber: '',
+        includeSummary: true,
+        includeViolations: true,
+        includeRecommendations: true,
+      };
+      const report = genReport(reportOptions);
       const reportContainer = document.getElementById("report-content");
       if (reportContainer) {
         reportContainer.innerHTML = report;
@@ -1550,31 +1455,6 @@ class FARComplianceApp {
   }
 }
 
-// Global functions for HTML onclick handlers
-function openLinkModal(glId) {
-  if (window.app) {
-    window.app.openLinkModal(glId);
-  }
-}
-
-function closeLinkModal() {
-  if (window.app) {
-    window.app.closeLinkModal();
-  }
-}
-
-function refreshDocumentList() {
-  if (window.app) {
-    window.app.refreshModalDocuments();
-  }
-}
-
-function saveLinkChanges() {
-  if (window.app) {
-    window.app.saveLinkChanges();
-  }
-}
-
 // Initialize app when DOM is ready
 document.addEventListener("DOMContentLoaded", async () => {
   window.app = new FARComplianceApp();
@@ -1582,4 +1462,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 // Export for module compatibility
+// Export for both ES modules and regular script loading
+if (typeof module !== 'undefined' && module.exports) {
+  // Node.js environment
+  module.exports = { FARComplianceApp };
+} else if (typeof window !== 'undefined') {
+  // Browser environment - make available globally
+  window.FARComplianceApp = FARComplianceApp;
+}
+
+// ES module export
 export { FARComplianceApp };

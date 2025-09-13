@@ -1,15 +1,13 @@
-export function generateReport(auditResults, glData) {
-  const reportTitleEl = document.getElementById('report-title');
-  const contractNumberEl = document.getElementById('contract-number');
-  const includeSummaryEl = document.getElementById('include-summary');
-  const includeViolationsEl = document.getElementById('include-violations');
-  const includeRecommendationsEl = document.getElementById('include-recommendations');
-  
-  const reportTitle = (reportTitleEl?.value) || 'FAR Compliance Audit Report';
-  const contractNumber = contractNumberEl?.value || '';
-  const includeSummary = includeSummaryEl?.checked !== false;
-  const includeViolations = includeViolationsEl?.checked !== false;
-  const includeRecommendations = includeRecommendationsEl?.checked !== false;
+export function generateReport(options) {
+  const {
+    auditResults,
+    glData,
+    reportTitle = 'FAR Compliance Audit Report',
+    contractNumber = '',
+    includeSummary = true,
+    includeViolations = true,
+    includeRecommendations = true,
+  } = options;
 
   let reportContent = `<h1>${reportTitle}</h1>`;
   if (contractNumber) {
@@ -80,12 +78,7 @@ export function generateReport(auditResults, glData) {
     `;
   }
 
-  const reportContentElement = document.getElementById('report-content');
-  const reportPreview = document.getElementById('report-preview');
-  if (reportContentElement && reportPreview) {
-    reportContentElement.innerHTML = reportContent;
-    reportPreview.classList.remove('hidden');
-  }
+  return reportContent;
 }
 
 export function exportToPDF() {
@@ -120,4 +113,3 @@ export function exportToPDF() {
   printWindow.document.close();
   printWindow.print();
 }
-
