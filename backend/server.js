@@ -592,20 +592,23 @@ app.post('/api/llm-review', async (req, res) => {
     // Enforce: At least one image must be attached to a GL item present in rows
     try {
       const glIdsInRequest = new Set(rows.map(r => String(r.id || r.gl_entry_id || r.glId || r.gl_id)).filter(Boolean));
-      let hasImage = false;
+      let hasAttachment = false;
       for (const link of memory.glDocLinks || []) {
         if (!glIdsInRequest.has(String(link.gl_entry_id))) continue;
         const docItem = (memory.docItems || []).find(i => String(i.id) === String(link.document_item_id));
         if (!docItem) continue;
         const doc = (memory.documents || []).find(d => String(d.id) === String(docItem.document_id));
-        if (doc && typeof doc.mime_type === 'string' && doc.mime_type.startsWith('image/')) { hasImage = true; break; }
+        if (doc && typeof doc.mime_type === 'string') {
+          const mt = doc.mime_type.toLowerCase();
+          if (mt.startsWith('image/') || mt.includes('pdf')) { hasAttachment = true; break; }
+        }
       }
-      if (!hasImage) {
-        return res.status(400).json({ error: 'AI review requires at least one image attached to a GL line item in the request.' });
+      if (!hasAttachment) {
+        return res.status(400).json({ error: 'AI review requires at least one image or PDF attached to a GL line item in the request.' });
       }
     } catch (gateErr) {
       console.warn('Attachment gate check failed:', gateErr?.message || gateErr);
-      return res.status(400).json({ error: 'AI review requires at least one image attachment.' });
+      return res.status(400).json({ error: 'AI review requires at least one image or PDF attachment.' });
     }
     console.log('Calling Azure OpenAI with', rows.length, 'rows...');
     const out = await callOpenAICompatible(rows);
@@ -690,7 +693,24 @@ app.get('/api/llm-test', async (req, res) => {
 });
 
 // ---------- Supplemental Documents Ingest ----------
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    try {
+      const mt = String(file.mimetype || '').toLowerCase();
+      const allowed = (
+        mt.startsWith('image/') ||
+        mt.includes('pdf') ||
+        mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      if (!allowed) return cb(new Error('Unsupported file type'), false);
+      cb(null, true);
+    } catch (e) {
+      cb(new Error('File validation failed'), false);
+    }
+  }
+});
 
 async function extractTextFromBuffer(buffer, mimeType, filename) {
   try {

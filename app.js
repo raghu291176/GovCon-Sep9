@@ -275,12 +275,22 @@ class FARComplianceApp {
 
   async updateLLMControlsEnabled() {
     const llmBtn = document.getElementById('llm-review-btn');
+    const hint = document.getElementById('llm-status-hint');
     if (!llmBtn) return;
     const online = await this.checkServerHealth();
     const hasImageAttachment = await this.hasAtLeastOneImageAttachment();
     const enabled = online && hasImageAttachment;
     llmBtn.disabled = !enabled;
-    llmBtn.title = enabled ? 'AI Review' : (!online ? 'Server offline: AI Review unavailable' : 'Attach at least one image to a GL item');
+    const msg = enabled
+      ? ''
+      : (!online
+          ? 'Server offline: AI Review unavailable'
+          : 'Attach at least one receipt/invoice image or PDF to a GL item');
+    llmBtn.title = enabled ? 'AI Review' : msg;
+    if (hint) {
+      hint.textContent = msg;
+      hint.style.display = enabled ? 'none' : '';
+    }
   }
 
   async hasAtLeastOneImageAttachment() {
@@ -294,7 +304,10 @@ class FARComplianceApp {
           const item = itemsById.get(String(l.document_item_id));
           if (!item) continue;
           const doc = docsById.get(String(item.document_id));
-          if (doc && typeof doc.mime_type === 'string' && doc.mime_type.startsWith('image/')) return true;
+          if (doc && typeof doc.mime_type === 'string') {
+            const mt = doc.mime_type.toLowerCase();
+            if (mt.startsWith('image/') || mt.includes('pdf')) return true;
+          }
         }
         return false;
       }

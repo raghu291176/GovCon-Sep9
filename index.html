@@ -10,7 +10,9 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     
-    <style>
+        <style>
+        /* Visually hidden utility for accessible labels */
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
         /* Global Styles */
         * {
             box-sizing: border-box;
@@ -887,18 +889,22 @@
                     <div class="flex gap-4">
                         <button id="run-audit-btn" class="btn btn--primary">Run FAR Audit</button>
                         <button id="llm-review-btn" class="btn btn--outline">AI Review</button>
+                        <div id="llm-status-hint" style="display:none;color:#9ca3af;font-size:12px;align-self:center;max-width:260px;"></div>
                     </div>
                 </div>
 
                 <!-- Filters -->
-                <div class="flex gap-4 mb-4">
+                <div class="flex gap-4 mb-4" aria-label="Filters for GL table">
+                    <label for="search-input" class="sr-only">Search GL entries</label>
                     <input type="text" id="search-input" placeholder="Search..." class="form-input" />
-                    <select id="severity-filter" class="form-select">
+                    <label for="severity-filter" class="sr-only">Filter by status</label>
+                    <select id="severity-filter" class="form-select" aria-describedby="severity-help">
                         <option value="">All Statuses</option>
                         <option value="RED">Red Flags</option>
                         <option value="YELLOW">Yellow Flags</option>
                         <option value="GREEN">Green</option>
                     </select>
+                    <span id="severity-help" class="sr-only">Choose a status to filter the table</span>
                     <label class="flex items-center">
                         <input type="checkbox" id="pending-only" class="checkbox-input" />
                         Pending Only
@@ -1107,6 +1113,8 @@
                     }
                 };
                 script.onerror = reject;
+                // app.js uses ES module syntax; load as module even in fallback
+                script.type = 'module';
                 script.src = './app.js';
                 document.head.appendChild(script);
             });
@@ -1293,18 +1301,12 @@
                             processingIndicator.classList.add('active');
                         }
                         
-                        // Check if backend is available
+                        // Try processing the Excel file client-side (fallback)
                         try {
-                            const healthCheck = await fetch('/api/system/health');
-                            if (healthCheck.ok) {
-                                console.log('Backend is available, processing with full functionality');
-                                alert('Processing GL data with backend integration...\n\nFile: ' + file.name + '\nSize: ' + (file.size / 1024).toFixed(2) + ' KB\n\nBackend integration active.');
-                            } else {
-                                throw new Error('Backend not available');
-                            }
-                        } catch (backendError) {
-                            console.log('Backend not available');
-                            alert('Backend server is not available. Please ensure the server is running for full functionality.');
+                            await processExcelFileInFallback(file);
+                        } catch (fallbackErr) {
+                            console.warn('Fallback processing failed:', fallbackErr?.message || fallbackErr);
+                            alert('Could not process the Excel file locally. Please try again or start the backend.');
                         }
                         
                         // Switch to review tab after processing
@@ -1312,6 +1314,8 @@
                         if (reviewTab) {
                             reviewTab.click();
                         }
+                        // Populate the table from localStorage/server in fallback mode
+                        try { await loadGLDataInFallbackMode(); } catch (_) {}
                         
                     } catch (error) {
                         console.error('Processing error:', error);
@@ -1519,34 +1523,62 @@
         }
         
         async function processExcelFileInFallback(file) {
-            try {
-                alert(`Processing Excel file: ${file.name}\n\nNote: Using basic client-side processing.\nFor full functionality, ensure the backend server is running.`);
-                
-                // For fallback mode, we'll create sample GL data since we can't easily parse Excel without libraries
+            // Prefer real parsing via global XLSX if available; else generate sample data
+            if (typeof XLSX === 'undefined') {
                 const sampleGLData = generateSampleGLData(file.name);
-                
-                // Save to localStorage
                 localStorage.setItem('glData', JSON.stringify(sampleGLData));
-                
-                // Also save processing info
-                localStorage.setItem('lastProcessedFile', JSON.stringify({
-                    filename: file.name,
-                    size: file.size,
-                    processedAt: new Date().toISOString(),
-                    entryCount: sampleGLData.length
-                }));
-                
-                console.log('Sample GL data generated and saved:', sampleGLData.length, 'entries');
-                
-                // Simulate processing time
-                await new Promise(resolve => setTimeout(resolve, 1500));
-                
-                alert(`Processing complete!\n\nGenerated ${sampleGLData.length} sample GL entries.\n\nNote: This is demo data. For real Excel processing, ensure the backend server is running.`);
-                
-            } catch (error) {
-                console.error('Error processing Excel file in fallback mode:', error);
-                throw error;
+                localStorage.setItem('lastProcessedFile', JSON.stringify({ filename: file.name, size: file.size, processedAt: new Date().toISOString(), entryCount: sampleGLData.length }));
+                return;
             }
+            
+            const arrayBuffer = await file.arrayBuffer();
+            const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const json = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+            
+            // Simple header-based mapping
+            function norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+            const amountKeys = ['amount','amountusd','total','totalamount','lineamount','extendedamount','netamount','grossamount','amt','transactionamount','amountus','$amount'];
+            const accountKeys = ['accountnumber','account','accountno','acct','acctnumber','glaccount'];
+            const descriptionKeys = ['description','memo','details','detail','itemdescription','narration'];
+            const dateKeys = ['date','postingdate','txndate','transactiondate','postdate'];
+            const categoryKeys = ['category','glcategory','accounttype','type','expensetype'];
+            const vendorKeys = ['vendor','vendorname','supplier','payee','company'];
+            const contractKeys = ['contractnumber','contract','contract#','contractno','ponumber','purchaseorder'];
+            
+            function firstByKeys(row, keys) {
+                const map = new Map();
+                Object.keys(row).forEach(k => map.set(norm(k), row[k]));
+                for (const k of keys) { const v = map.get(norm(k)); if (v !== undefined) return v; }
+                return undefined;
+            }
+            function parseNumber(val){
+                if (val == null || val === '') return 0;
+                if (typeof val === 'number') return val;
+                let s = String(val).trim();
+                let neg = false; if (/^\(.+\)$/.test(s)){ neg=true; s=s.slice(1,-1);} s=s.replace(/[^0-9.\-]/g,'');
+                const n = Number(s); if (!Number.isFinite(n)) return 0; return neg ? -n : n;
+            }
+            function excelDateToISO(d){
+                if (typeof d === 'number' && Number.isFinite(d)){
+                    const epoch = new Date(Date.UTC(1899,11,30));
+                    return new Date(epoch.getTime()+d*86400000).toISOString().slice(0,10);
+                }
+                return d ? String(d) : '';
+            }
+            const mapped = json.map((row, i) => ({
+                id: i,
+                accountNumber: firstByKeys(row, accountKeys) || '',
+                description: firstByKeys(row, descriptionKeys) || '',
+                amount: parseNumber(firstByKeys(row, amountKeys)),
+                date: excelDateToISO(firstByKeys(row, dateKeys)),
+                category: firstByKeys(row, categoryKeys) || '',
+                vendor: firstByKeys(row, vendorKeys) || '',
+                contractNumber: firstByKeys(row, contractKeys) || ''
+            }));
+            
+            localStorage.setItem('glData', JSON.stringify(mapped));
+            localStorage.setItem('lastProcessedFile', JSON.stringify({ filename: file.name, size: file.size, processedAt: new Date().toISOString(), entryCount: mapped.length }));
         }
         
         function generateSampleGLData(filename) {
