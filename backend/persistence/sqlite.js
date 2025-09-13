@@ -19,6 +19,8 @@ function tryRequireBetterSqlite3() {
 
 function ensureTables(db) {
   db.pragma('journal_mode = WAL');
+
+  // Create tables
   db.exec(`
     CREATE TABLE IF NOT EXISTS gl_entries (
       id TEXT PRIMARY KEY,
@@ -39,7 +41,9 @@ function ensureTables(db) {
       mime_type TEXT,
       text_content TEXT,
       created_at TEXT,
-      doc_type TEXT
+      doc_type TEXT,
+      file_url TEXT,
+      meta_json TEXT
     );
     CREATE TABLE IF NOT EXISTS document_approvals (
       id TEXT PRIMARY KEY,
@@ -75,6 +79,24 @@ function ensureTables(db) {
       value_json TEXT
     );
   `);
+
+  // Migrate existing documents table to add missing columns
+  try {
+    const columns = db.pragma('table_info(documents)');
+    const columnNames = columns.map(col => col.name);
+
+    if (!columnNames.includes('file_url')) {
+      console.log('🔧 Migrating SQLite: Adding file_url column to documents table');
+      db.exec('ALTER TABLE documents ADD COLUMN file_url TEXT');
+    }
+
+    if (!columnNames.includes('meta_json')) {
+      console.log('🔧 Migrating SQLite: Adding meta_json column to documents table');
+      db.exec('ALTER TABLE documents ADD COLUMN meta_json TEXT');
+    }
+  } catch (migrationError) {
+    console.warn('⚠️ SQLite migration warning:', migrationError.message);
+  }
 }
 
 export function setupSQLite(memory) {
@@ -103,8 +125,8 @@ export function setupSQLite(memory) {
     VALUES (@id, @account_number, @description, @amount, @date, @category, @vendor, @contract_number, @created_at, @doc_summary, @doc_flag_unallowable)`);
 
   const insertDoc = db.prepare(`INSERT OR REPLACE INTO documents
-    (id, filename, mime_type, text_content, created_at, doc_type)
-    VALUES (@id, @filename, @mime_type, @text_content, @created_at, @doc_type)`);
+    (id, filename, mime_type, text_content, created_at, doc_type, file_url, meta_json)
+    VALUES (@id, @filename, @mime_type, @text_content, @created_at, @doc_type, @file_url, @meta_json)`);
 
   const insertApproval = db.prepare(`INSERT OR REPLACE INTO document_approvals
     (id, document_id, approver, title, date, decision, comments, targetType)
@@ -154,6 +176,8 @@ export function setupSQLite(memory) {
           text_content: d.text_content,
           created_at: d.created_at ? new Date(d.created_at) : new Date(),
           doc_type: d.doc_type,
+          file_url: d.file_url,
+          meta: d.meta_json ? JSON.parse(d.meta_json) : {},
           approvals: []
         };
         byDoc.set(String(d.id), doc);

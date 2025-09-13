@@ -1,123 +1,58 @@
-// Complete tableView.js with Document Linking Modal Integration
-
+// Safe, minimal table renderer
 export function renderGLTable(data) {
+  console.log('📊 Rendering GL table with', data?.length || 0, 'items');
   const tbody = document.getElementById("gl-table-body");
-  if (!tbody) return;
+  if (!tbody) {
+    console.error('❌ GL table body element not found');
+    return;
+  }
 
-  const rows = data.map((item, index) => {
-    const statusBadge = item.status
-      ? `<span class="status-badge status-badge--${item.status.toLowerCase()}">${item.status}</span>`
-      : `<span class="status-badge status-badge--green">PENDING</span>`;
-
-    const reason = item.farIssue || (item.status !== "GREEN" ? "No issues detected" : "Not audited");
-    
-    // Count linked documents
-    const linkedCount = item.linked_documents ? item.linked_documents.length : 0;
-    const attachmentDisplay = linkedCount > 0 ? 
-      `<span class="attachment-count" title="${linkedCount} document(s) linked">${linkedCount}</span>` : 
-      `<span class="attachment-count">0</span>`;
-
-    return `
-      <tr class="gl-row" data-row-id="${index}" ${item.id ? `data-gl-id="${item.id}"` : ''}>
-        <td>${statusBadge}</td>
-        <td>${item.accountNumber || ''}</td>
-        <td>${item.description || ''}</td>
-        <td class="amount">$${(item.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-        <td>${item.date || ''}</td>
-        <td>${item.category || ''}</td>
-        <td>${item.vendor || ''}</td>
-        <td class="center">
-          ${attachmentDisplay}
-          ${item.hasReceipt ? '<span title="Receipt linked">📄</span>' : ''}
-        </td>
-        <td>
-          ${item.id ? `<button class="quick-link" data-gl-id="${item.id}" title="Link Documents">Quick Link</button>` : ''}
-        </td>
-        <td>${item.approvalState || ''}</td>
-        <td class="far-issue">${reason || 'Not audited'}</td>
-      </tr>
-      <tr class="gl-row-details hidden" data-row-id="${index}" ${item.id ? `data-gl-id="${item.id}"` : ''}>
-        <td colspan="11">
-          <div class="gl-details">
-            <div class="gl-details-section">
-              <strong>Reason:</strong> ${reason || 'Not audited'}
-              ${item.farSection ? `<span class="gl-details-muted">(FAR ${item.farSection})</span>` : ''}
-            </div>
-            
-            <div class="gl-details-grid">
-              <div><strong>Account:</strong> ${item.accountNumber || ''}</div>
-              <div><strong>Amount:</strong> $${(item.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-              <div><strong>Date:</strong> ${item.date || ''}</div>
-              <div><strong>Category:</strong> ${item.category || ''}</div>
-              <div><strong>Vendor:</strong> ${item.vendor || ''}</div>
-              <div><strong>Contract #:</strong> ${item.contractNumber || ''}</div>
-              <div><strong>Status:</strong> ${item.status || 'PENDING'}</div>
-              <div><strong>Attachments:</strong> ${linkedCount}</div>
-              <div><strong>Approvals:</strong> ${typeof item.approvalsCount === 'number' ? item.approvalsCount : (item.hasApproval ? 1 : 0)}</div>
-              <div><strong>Approval State:</strong> ${item.approvalState || ''}</div>
-            </div>
-            
-            <div class="gl-details-section">
-              <strong>Linked Documents:</strong>
-              <div class="gl-linked" ${item.id ? `data-gl-id="${item.id}"` : ''}>
-                ${renderLinkedDocuments(item)}
-              </div>
-            </div>
-          </div>
+  if (!Array.isArray(data) || data.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="11" style="text-align: center; padding: 40px; color: #6b7280;">
+          <div style="margin-bottom: 8px;">📄 No GL data available</div>
+          <div style="font-size: 14px;">Upload an Excel file to get started</div>
         </td>
       </tr>
     `;
+    return;
+  }
+
+  const rows = data.map((item, index) => {
+    const safeItem = {
+      id: item.id || index,
+      status: item.status || 'PENDING',
+      accountNumber: String(item.accountNumber || ''),
+      description: String(item.description || ''),
+      amount: Number(item.amount) || 0,
+      date: String(item.date || ''),
+      category: String(item.category || ''),
+      vendor: String(item.vendor || ''),
+      farIssue: String(item.farIssue || 'Not audited'),
+      linked_documents: Array.isArray(item.linked_documents) ? item.linked_documents : []
+    };
+    const statusClass = safeItem.status.toLowerCase();
+    const linkedCount = safeItem.linked_documents.length;
+    const escape = (str) => { const div = document.createElement('div'); div.textContent = str; return div.innerHTML; };
+    return `
+      <tr class="gl-row" data-row-id="${index}" data-gl-id="${safeItem.id}">
+        <td><span class="status-badge status-badge--${statusClass}">${escape(safeItem.status)}</span></td>
+        <td>${escape(safeItem.accountNumber)}</td>
+        <td title="${escape(safeItem.description)}">${escape(safeItem.description.substring(0, 50))}${safeItem.description.length > 50 ? '...' : ''}</td>
+        <td class="amount">$${safeItem.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+        <td>${escape(safeItem.date)}</td>
+        <td>${escape(safeItem.category)}</td>
+        <td>${escape(safeItem.vendor)}</td>
+        <td class="center"><span class="attachment-count" title="${linkedCount} document(s) linked">${linkedCount}</span></td>
+        <td><button class="quick-link" data-gl-id="${safeItem.id}" title="Link Documents">Link</button></td>
+        <td></td>
+        <td class="far-issue" title="${escape(safeItem.farIssue)}">${escape(safeItem.farIssue.substring(0, 30))}${safeItem.farIssue.length > 30 ? '...' : ''}</td>
+      </tr>
+    `;
   }).join('');
-
   tbody.innerHTML = rows;
-
-  // Helpers to collapse all and activate one row
-  function collapseAll() {
-    tbody.querySelectorAll('tr.gl-row').forEach(r => r.classList.remove('active'));
-    tbody.querySelectorAll('tr.gl-row-details').forEach(d => d.classList.add('hidden'));
-  }
-
-  // Bind row toggle once via delegation
-  if (!tbody.dataset.toggleBound) {
-    tbody.addEventListener('click', (e) => {
-      const tr = e.target.closest('tr.gl-row');
-      if (!tr || !tbody.contains(tr)) return;
-
-      const rowId = tr.getAttribute('data-row-id');
-      const details = tbody.querySelector(`tr.gl-row-details[data-row-id="${rowId}"]`);
-      if (!details) return;
-
-      const willExpand = details.classList.contains('hidden');
-      collapseAll();
-      if (willExpand) {
-        tr.classList.add('active');
-        details.classList.remove('hidden');
-      }
-    });
-    tbody.dataset.toggleBound = 'true';
-  }
-
-  // Global ESC handler to collapse any expanded rows
-  if (!tbody.dataset.escBound) {
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        collapseAll();
-      }
-    });
-    tbody.dataset.escBound = 'true';
-  }
-}
-
-function renderLinkedDocuments(item) {
-  if (!item.linked_documents || !item.linked_documents.length) {
-    return '<span class="no-links">No documents linked</span>';
-  }
-
-  // This would need access to the documents list to show names
-  // For now, just show count and IDs
-  return item.linked_documents.map(docId => 
-    `<span class="linked-doc" title="Document ID: ${docId}">📄 Doc-${docId.substring(0, 8)}</span>`
-  ).join(' ');
+  console.log(`✅ Table rendered with ${data.length} rows`);
 }
 
 export function filterData(auditResults, severityValue, searchTerm) {

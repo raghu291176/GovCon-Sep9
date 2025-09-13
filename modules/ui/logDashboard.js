@@ -358,7 +358,7 @@ window.updateLogAnalytics = async function() {
     const timeRange = document.getElementById('log-time-range').value;
     
     try {
-        const response = await fetch(\`/api/logs/analytics?timeRange=\${timeRange}\`);
+        const response = await fetch(`/api/logs/analytics?timeRange=${timeRange}`);
         const analytics = await response.json();
         
         // Update metrics
@@ -385,7 +385,7 @@ window.updateSystemHealth = async function() {
         
         const healthElement = document.getElementById('system-health');
         healthElement.textContent = health.status;
-        healthElement.className = \`metric-value \${health.status.toLowerCase()}\`;
+        healthElement.className = `metric-value ${health.status.toLowerCase()}`;
         
     } catch (error) {
         console.error('Failed to update system health:', error);
@@ -454,12 +454,12 @@ function updateCategoriesList(categoryCounts) {
         return;
     }
     
-    container.innerHTML = categories.map(([category, count]) => \`
+    container.innerHTML = categories.map(([category, count]) => `
         <div class="category-item">
-            <span class="category-name">\${category.replace('_', ' ')}</span>
-            <span class="category-count">\${count.toLocaleString()}</span>
+            <span class="category-name">${category.replace('_', ' ')}</span>
+            <span class="category-count">${count.toLocaleString()}</span>
         </div>
-    \`).join('');
+    `).join('');
 }
 
 function updateErrorPatterns(topErrors) {
@@ -475,12 +475,12 @@ function updateErrorPatterns(topErrors) {
         return;
     }
     
-    container.innerHTML = topErrors.map(({ pattern, count }) => \`
+    container.innerHTML = topErrors.map(({ pattern, count }) => `
         <div class="error-pattern">
-            <span class="error-pattern-text">\${pattern}</span>
-            <span class="error-pattern-count">\${count}</span>
+            <span class="error-pattern-text">${pattern}</span>
+            <span class="error-pattern-count">${count}</span>
         </div>
-    \`).join('');
+    `).join('');
 }
 
 window.loadRecentLogs = async function() {
@@ -490,9 +490,9 @@ window.loadRecentLogs = async function() {
     
     try {
         let url = '/api/logs?limit=50';
-        if (levelFilter) url += \`&level=\${levelFilter}\`;
-        if (categoryFilter) url += \`&category=\${categoryFilter}\`;
-        if (searchQuery) url += \`&search=\${encodeURIComponent(searchQuery)}\`;
+        if (levelFilter) url += `&level=${levelFilter}`;
+        if (categoryFilter) url += `&category=${categoryFilter}`;
+        if (searchQuery) url += `&search=${encodeURIComponent(searchQuery)}`;
         
         const response = await fetch(url);
         const result = await response.json();
@@ -501,16 +501,16 @@ window.loadRecentLogs = async function() {
         const countElement = document.getElementById('log-count');
         
         if (container) {
-            container.innerHTML = result.logs.map(log => \`
-                <div class="log-entry \${log.level}">
+            container.innerHTML = result.logs.map(log => `
+                <div class="log-entry ${log.level}">
                     <div>
-                        <span class="log-timestamp">\${new Date(log.timestamp).toLocaleString()}</span>
-                        <span class="log-level \${log.level}">\${log.level}</span>
-                        <span class="log-category">\${log.category}</span>
+                        <span class="log-timestamp">${new Date(log.timestamp).toLocaleString()}</span>
+                        <span class="log-level ${log.level}">${log.level}</span>
+                        <span class="log-category">${log.category}</span>
                     </div>
-                    <div class="log-message">\${log.message}</div>
+                    <div class="log-message">${log.message}</div>
                 </div>
-            \`).join('');
+            `).join('');
         }
         
         if (countElement) {
@@ -545,7 +545,7 @@ window.clearOldLogs = async function() {
         });
         
         const result = await response.json();
-        alert(\`Cleared \${result.clearedCount} old logs. \${result.remainingCount} logs remaining.\`);
+        alert(`Cleared ${result.clearedCount} old logs. ${result.remainingCount} logs remaining.`);
         
         // Refresh dashboard
         refreshLogs();

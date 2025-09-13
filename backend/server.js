@@ -135,9 +135,20 @@ const memory = {
 };
 
 // Optional SQLite persistence (loads existing state into memory)
+console.log('🗄️ Initializing SQLite persistence...');
 const sqlite = setupSQLite(memory);
-// Load persisted configs if SQLite is unavailable
-if (!sqlite) {
+
+if (sqlite) {
+  console.log('✅ SQLite persistence initialized successfully');
+  console.log('📊 Loaded from SQLite:', {
+    glEntries: memory.glEntries.length,
+    documents: memory.documents.length,
+    docItems: memory.docItems.length,
+    links: memory.glDocLinks.length
+  });
+} else {
+  console.warn('⚠️ SQLite not available - using file-based configs and in-memory storage');
+  console.warn('⚠️ DATA WILL NOT PERSIST between server restarts!');
   loadFileConfigs(memory);
 }
 
@@ -239,7 +250,9 @@ app.post('/api/gl', async (req, res) => {
             doc_flag_unallowable: e.doc_flag_unallowable ? 1 : 0,
           };
         });
+        console.log('💾 Saving GL entries to SQLite:', rows.length, 'entries');
         sqlite.insertGLEntries(rows);
+        console.log('✅ GL entries saved to SQLite successfully');
       }
     } catch (dbError) {
       console.error("Failed to persist GL entries to SQLite:", dbError);
@@ -1170,11 +1183,47 @@ app.post('/api/docs/ingest', upload.array('files', 10), async (req, res) => {
       } catch (_) {}
       try {
         if (sqlite) {
-          sqlite.saveDocument({ id: String(docId), filename: f.originalname, mime_type: f.mimetype, text_content: text || '', created_at: new Date().toISOString(), doc_type: docRecord.doc_type || null }, docRecord.approvals || []);
-          sqlite.saveDocItems(itemRows.map(i => ({ id: String(i.id), document_id: String(docId), kind: i.kind, vendor: i.vendor, date: i.date, amount: typeof i.amount === 'number' ? i.amount : null, currency: i.currency || 'USD', details: i.details || {}, text_excerpt: i.text_excerpt || null })));
-          sqlite.saveLinks(links.map(l => ({ document_item_id: String(l.document_item_id), gl_entry_id: String(l.gl_entry_id), score: l.score || 0, doc_summary: l.doc_summary || null, doc_flag_unallowable: l.doc_flag_unallowable ? 1 : 0 })));
+          console.log('💾 Saving document to SQLite:', docId, f.originalname);
+          sqlite.saveDocument({
+            id: String(docId),
+            filename: f.originalname,
+            mime_type: f.mimetype,
+            text_content: text || '',
+            created_at: new Date().toISOString(),
+            doc_type: docRecord.doc_type || null,
+            file_url: fileUrl,
+            meta_json: JSON.stringify(docRecord.meta || {})
+          }, docRecord.approvals || []);
+
+          console.log('💾 Saving document items to SQLite:', itemRows.length, 'items');
+          sqlite.saveDocItems(itemRows.map(i => ({
+            id: String(i.id),
+            document_id: String(docId),
+            kind: i.kind,
+            vendor: i.vendor,
+            date: i.date,
+            amount: typeof i.amount === 'number' ? i.amount : null,
+            currency: i.currency || 'USD',
+            details: i.details || {},
+            text_excerpt: i.text_excerpt || null
+          })));
+
+          console.log('💾 Saving document links to SQLite:', links.length, 'links');
+          sqlite.saveLinks(links.map(l => ({
+            document_item_id: String(l.document_item_id),
+            gl_entry_id: String(l.gl_entry_id),
+            score: l.score || 0,
+            doc_summary: l.doc_summary || null,
+            doc_flag_unallowable: l.doc_flag_unallowable ? 1 : 0
+          })));
+
+          console.log('✅ SQLite save completed for document:', docId);
+        } else {
+          console.warn('⚠️ SQLite not available - data will not persist');
         }
-      } catch (_) {}
+      } catch (error) {
+        console.error('❌ SQLite save failed:', error.message || error);
+      }
       results.push({ 
         document_id: String(docId), 
         filename: f.originalname, 
@@ -1327,6 +1376,156 @@ app.delete('/api/docs/link', express.json(), (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// Endpoint to reprocess existing documents with Tesseract OCR
+app.post('/api/docs/reprocess', express.json(), async (req, res) => {
+  try {
+    const { document_id } = req.body;
+
+    if (!document_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'document_id is required',
+        code: 'MISSING_DOCUMENT_ID'
+      });
+    }
+
+    // Find the document in memory
+    const doc = memory.documents.find(d => d.id === document_id);
+    if (!doc) {
+      return res.status(404).json({
+        success: false,
+        error: 'Document not found',
+        code: 'DOCUMENT_NOT_FOUND'
+      });
+    }
+
+    // Read the file from disk
+    if (!doc.file_url) {
+      return res.status(400).json({
+        success: false,
+        error: 'Document file not available for processing',
+        code: 'FILE_NOT_AVAILABLE'
+      });
+    }
+
+    try {
+      // Construct file path from file_url
+      const urlPath = doc.file_url.replace('/uploads/', '');
+      const filePath = path.join(UPLOAD_DIR, urlPath);
+
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({
+          success: false,
+          error: 'Document file not found on disk',
+          code: 'FILE_NOT_FOUND'
+        });
+      }
+
+      const fileBuffer = fs.readFileSync(filePath);
+
+      // Convert GL entries to Codex format
+      const codexGLEntries = memory.glEntries.map(entry => ({
+        id: entry.id,
+        amount: entry.amount,
+        date: entry.date,
+        vendor: entry.vendor,
+        description: entry.description,
+        account: entry.account_number
+      }));
+
+      console.log(`🔄 Reprocessing document: ${doc.filename} with Tesseract OCR`);
+
+      // Run the document workflow which includes Tesseract OCR
+      const result = await processDocumentWorkflow(fileBuffer, codexGLEntries);
+
+      if (result.processing_status === 'success') {
+        // Update the document with OCR results
+        doc.text_content = result.metadata?.tesseract_text_length ? 'Tesseract OCR completed successfully' : 'OCR processing completed';
+        doc.meta = {
+          ...doc.meta,
+          confidence: result.extracted_data?.confidence_scores?.overall || 0.85,
+          processing_method: result.processing_method,
+          processing_time_ms: result.processing_time_ms,
+          last_processed: new Date().toISOString()
+        };
+
+        // Update any existing document items
+        const existingItems = memory.docItems.filter(item => item.document_id === document_id);
+        if (existingItems.length > 0) {
+          existingItems.forEach(item => {
+            item.vendor = result.extracted_data?.merchant || item.vendor;
+            item.date = result.extracted_data?.date || item.date;
+            item.amount = result.extracted_data?.amount || item.amount;
+            item.details = {
+              ...item.details,
+              confidence: result.extracted_data?.confidence_scores,
+              processing_method: result.processing_method
+            };
+          });
+        } else {
+          // Create new document item if none exists
+          const newItem = {
+            id: crypto.randomUUID(),
+            document_id: document_id,
+            kind: 'receipt',
+            vendor: result.extracted_data?.merchant || 'Unknown',
+            date: result.extracted_data?.date || null,
+            amount: result.extracted_data?.amount || 0,
+            currency: 'USD',
+            details: {
+              confidence: result.extracted_data?.confidence_scores,
+              processing_method: result.processing_method
+            }
+          };
+          memory.docItems.push(newItem);
+        }
+
+        console.log(`✅ Document reprocessed successfully: ${doc.filename}`);
+
+        res.json({
+          success: true,
+          data: {
+            document_id: document_id,
+            processing_method: result.processing_method,
+            processing_time_ms: result.processing_time_ms,
+            extracted_data: result.extracted_data,
+            confidence_scores: result.extracted_data?.confidence_scores,
+            text_extracted: doc.text_content,
+            processing_status: result.processing_status
+          }
+        });
+      } else {
+        console.error(`❌ Document reprocessing failed: ${doc.filename}`, result.error_messages);
+
+        res.status(500).json({
+          success: false,
+          error: 'Document processing failed',
+          code: 'PROCESSING_FAILED',
+          details: result.error_messages
+        });
+      }
+
+    } catch (processingError) {
+      console.error('Document reprocessing error:', processingError);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to process document with OCR',
+        code: 'OCR_PROCESSING_ERROR',
+        details: processingError.message
+      });
+    }
+
+  } catch (error) {
+    console.error('Reprocess endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR',
+      details: error.message
+    });
   }
 });
 

@@ -17,6 +17,23 @@ import {
 
 import { farRules as builtinFarRules } from "./modules/data/farRules.js";
 
+// Optional: filter out noisy extension warnings in console output
+try {
+  if (typeof window !== 'undefined' && window.console) {
+    const originalConsole = window.console;
+    window.console = {
+      ...originalConsole,
+      warn: (...args) => {
+        try {
+          const msg = args.map(a => (typeof a === 'string' ? a : '')).join(' ');
+          if (msg.includes('deprecated') && msg.includes('content.js')) return;
+        } catch (_) {}
+        originalConsole.warn(...args);
+      }
+    };
+  }
+} catch (_) {}
+
 class FARComplianceApp {
   constructor() {
     this.glData = [];
@@ -65,30 +82,68 @@ class FARComplianceApp {
   }
 
   async init() {
-    await this.loadConfig();
-    this.setupEventListeners();
-    this.setupFileUpload();
-    this.setupDocsUI();
-    this.setupAdminUI();
-
-    // Initialize document modal
-    this.setupDocumentModal();
-
     try {
-      // Load existing GL data from server if available
-      await this.loadExistingGLData();
-      await this.refreshDocsSummary();
-      await this.refreshRequirementsSummary();
+      await this.loadConfig();
+      this.setupEventListeners();
+      this.setupFileUpload();
+      this.setupDocsUI();
+      this.setupAdminUI();
+      this.setupDocumentModal();
+
+      // Safe loading with error handling
+      try {
+        await this.loadExistingGLData();
+        await this.refreshDocsSummary();
+        await this.refreshRequirementsSummary();
+      } catch (error) {
+        console.warn('Non-critical initialization error:', error);
+        // Continue with empty data
+        this.glData = [];
+        this.auditResults = [];
+      }
+
       this.renderGLTable();
       this.updateDashboard();
-      await this.renderUnmatchedList();
-    } catch (_) {}
 
-    this.renderGLTable();
-    this.updateDashboard();
+      // Safe async operations
+      try {
+        await this.updateDocsControlsEnabled();
+        await this.updateLLMControlsEnabled();
+      } catch (error) {
+        console.warn('UI update error:', error);
+      }
 
-    try { await this.updateDocsControlsEnabled(); } catch (_) {}
-    try { await this.updateLLMControlsEnabled(); } catch (_) {}
+      console.log('✅ App initialized successfully');
+    } catch (error) {
+      console.error('❌ Critical initialization error:', error);
+      this.showInitializationError(error);
+    }
+  }
+
+  showInitializationError(error) {
+    const container = document.querySelector('.container');
+    if (container) {
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = `
+        background: #fee2e2; color: #991b1b; 
+        padding: 16px; border-radius: 8px; margin: 16px 0;
+        border: 1px solid #fecaca;
+      `;
+      errorDiv.innerHTML = `
+        <h3>⚠️ App Initialization Error</h3>
+        <p>The application failed to start properly. Please:</p>
+        <ul>
+          <li>Check your internet connection</li>
+          <li>Refresh the page</li>
+          <li>Check browser console for details</li>
+        </ul>
+        <details>
+          <summary>Technical Details</summary>
+          <pre style="font-size: 12px; margin-top: 8px;">${error.message}</pre>
+        </details>
+      `;
+      container.insertBefore(errorDiv, container.firstChild);
+    }
   }
 
   async loadConfig() {
@@ -123,6 +178,7 @@ class FARComplianceApp {
   }
 
   async loadExistingGLData() {
+    const perfStart = Date.now();
     try {
       if (this.apiBaseUrl) {
         console.log('Loading existing GL data from server...');
@@ -145,6 +201,7 @@ class FARComplianceApp {
             docFlagUnallowable: row.doc_flag_unallowable
           }));
           console.log(`Loaded ${this.glData.length} existing GL entries from server`);
+          this.logPerformance('Load Existing GL Data', perfStart, `${this.glData.length} rows`);
           
           // Run initial audit if FAR rules are loaded
           if (this.farRules && this.farRules.length > 0) {
@@ -154,6 +211,7 @@ class FARComplianceApp {
       }
     } catch (e) {
       console.warn('Failed to load existing GL data:', e);
+      this.logPerformance('Load Existing GL Data (failed)', perfStart);
     }
   }
 
@@ -165,100 +223,106 @@ class FARComplianceApp {
   }
 
   setupEventListeners() {
-    document.querySelectorAll(".tab-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // Use the button that owns the handler, not the inner clicked node
-        const ownerBtn = e.currentTarget || e.target.closest('.tab-btn');
-        const tabName = ownerBtn ? ownerBtn.getAttribute("data-tab") : null;
-        if (tabName) this.switchTab(tabName);
-      });
-    });
+    console.log('🔗 Setting up event listeners...');
 
-    const runAuditBtn = document.getElementById("run-audit-btn");
-    const llmBtn = document.getElementById("llm-review-btn");
-
-    if (runAuditBtn) {
-      runAuditBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        this.runAudit();
-      });
-    }
-
-    if (llmBtn) {
-      llmBtn.addEventListener('click', async (e) => {
-        e.preventDefault();
-        // If disabled due to offline, do nothing
-        if (llmBtn.disabled) return;
-        await this.runLLMReview();
-      });
-    }
-
-    const processGLBtn = document.getElementById("process-gl-btn");
-
-    if (processGLBtn) {
-      processGLBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (this.uploadedFile) {
-          this.processUploadedFile();
-        } else if (this.glData && this.glData.length > 0) {
-          this.runAudit();
-          this.switchTab("review");
-        } else {
-          alert("Please select an Excel file first or ensure GL data is loaded.");
+    const bindEvent = (elementId, eventType, handler, description) => {
+      const element = document.getElementById(elementId);
+      if (!element) {
+        console.warn(`⚠️ Element not found: ${elementId}`);
+        return false;
+      }
+      if (element.dataset.bound === 'true') {
+        console.log(`ℹ️ Event already bound: ${elementId} ${eventType}`);
+        return true;
+      }
+      element.addEventListener(eventType, (e) => {
+        try { handler.call(this, e); } catch (error) {
+          console.error(`❌ Event handler error (${elementId}):`, error);
+          alert(`Error: ${error.message}`);
         }
       });
-    }
+      element.dataset.bound = 'true';
+      console.log(`✅ Bound ${eventType} to ${elementId}: ${description}`);
+      return true;
+    };
 
+    bindEvent("run-audit-btn", "click", this.runAudit, "Run FAR audit");
+    bindEvent("llm-review-btn", "click", this.runLLMReview, "Run LLM review");
+    bindEvent("process-gl-btn", "click", this.handleProcessGL, "Process GL data");
+    bindEvent("generate-report-btn", "click", this.generateReport, "Generate report");
+    bindEvent("export-pdf-btn", "click", this.exportToPDF, "Export to PDF");
+    bindEvent("azure-ocr-btn", "click", this.runAzureOCR, "Run Azure OCR");
+    bindEvent("refresh-docs-btn", "click", this.refreshDocuments, "Refresh documents");
+
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      if (btn.dataset.tabBound === 'true') return;
+      btn.addEventListener("click", (e) => {
+        try {
+          e.preventDefault();
+          const tabName = btn.getAttribute("data-tab");
+          if (tabName) this.switchTab(tabName);
+        } catch (error) {
+          console.error('Tab switch error:', error);
+        }
+      });
+      btn.dataset.tabBound = 'true';
+    });
+
+    // Setup subtab navigation
+    document.querySelectorAll(".subtab-btn").forEach((btn) => {
+      if (btn.dataset.subtabBound === 'true') return;
+      btn.addEventListener("click", (e) => {
+        try {
+          e.preventDefault();
+          const subtabName = btn.getAttribute("data-subtab");
+          if (subtabName) this.switchSubtab(subtabName);
+        } catch (error) {
+          console.error('Subtab switch error:', error);
+        }
+      });
+      btn.dataset.subtabBound = 'true';
+    });
+
+    const searchInput = document.getElementById("search-input");
+    const severityFilter = document.getElementById("severity-filter");
     const pendingOnlyEl = document.getElementById('pending-only');
+    if (searchInput) {
+      const debouncedFilter = this.debounce(() => this.filterTable(), 300);
+      searchInput.addEventListener("input", debouncedFilter);
+    }
+    if (severityFilter) {
+      severityFilter.addEventListener("change", () => this.filterTable());
+    }
     if (pendingOnlyEl && !pendingOnlyEl.dataset.bound) {
       pendingOnlyEl.addEventListener('change', () => this.filterTable());
       pendingOnlyEl.dataset.bound = 'true';
     }
 
-    const severityFilter = document.getElementById("severity-filter");
-    const searchInput = document.getElementById("search-input");
-
-    if (severityFilter) {
-      severityFilter.addEventListener("change", () => this.filterTable());
-    }
-
-    if (searchInput) {
-      if (!this._debouncedFilter) {
-        this._debouncedFilter = this.debounce(() => this.filterTable(), 200);
-      }
-      // Use debounced input to avoid excessive re-rendering while typing
-      searchInput.addEventListener("input", this._debouncedFilter);
-    }
-
-    const generateReportBtn = document.getElementById("generate-report-btn");
-    const exportPdfBtn = document.getElementById("export-pdf-btn");
-
-    if (generateReportBtn) {
-      generateReportBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        this.generateReport();
-      });
-    }
-
-    if (exportPdfBtn) {
-      exportPdfBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        this.exportToPDF();
-      });
-    }
-
     const glTable = document.getElementById("gl-table");
-    if (glTable) {
+    if (glTable && !glTable.dataset.quickLinkBound) {
       glTable.addEventListener("click", (e) => {
-        // Find the button that was clicked, if any
         const linkButton = e.target.closest(".quick-link");
         if (linkButton && linkButton.dataset.glId) {
           e.preventDefault();
           this.openLinkModal(linkButton.dataset.glId);
         }
       });
+      glTable.dataset.quickLinkBound = 'true';
+    }
+
+    console.log('✅ Event listeners setup complete');
+  }
+
+  handleProcessGL(e) {
+    e.preventDefault();
+    console.log('🔄 Processing GL data...');
+    if (this.uploadedFile) {
+      this.processUploadedFile();
+    } else if (this.glData && this.glData.length > 0) {
+      this.runAudit();
+      this.switchTab("review");
+    } else {
+      alert("Please select an Excel file first or ensure GL data is loaded.");
     }
   }
 
@@ -351,6 +415,7 @@ class FARComplianceApp {
     this.docs.summaryEl = summaryEl;
 
     const uploadBatches = async (files) => {
+      const perfStart = Date.now();
       if (!this.apiBaseUrl) {
         if (statusEl) statusEl.textContent = 'Server not available. Ensure backend is running.';
         return;
@@ -403,9 +468,9 @@ class FARComplianceApp {
 
       const codexMsg = codexCount > 0 ? ` (${codexCount} enhanced with Codex OCR)` : '';
       if (statusEl) statusEl.textContent = `Parsed documents${codexMsg}.`;
-      
       await this.refreshDocsSummary();
       await this.refreshRequirementsSummary();
+      try { this.logPerformance('Docs Ingest', perfStart, `${list.length} files`); } catch (_) {}
       try { await this.updateLLMControlsEnabled(); } catch (_) {}
     };
 
@@ -722,6 +787,7 @@ class FARComplianceApp {
   }
 
   async loadDocumentsAndLinks() {
+    const perfStart = Date.now();
     try {
       const docsData = await listDocItems(this.apiBaseUrl);
       this.documentModal.availableDocuments = docsData.documents || [];
@@ -731,11 +797,12 @@ class FARComplianceApp {
       
       console.log('Loaded documents:', this.documentModal.availableDocuments.length);
       console.log('Currently linked:', this.documentModal.linkedDocumentIds);
-      
+      this.logPerformance('Load Documents & Links', perfStart, `${this.documentModal.availableDocuments.length} docs`);
     } catch (error) {
       console.error('Error loading documents:', error);
       this.documentModal.availableDocuments = [];
       this.documentModal.linkedDocumentIds = [];
+      this.logPerformance('Load Documents & Links (failed)', perfStart);
     }
   }
 
@@ -992,6 +1059,7 @@ class FARComplianceApp {
 
   async saveLinkChanges() {
     if (!this.documentModal.currentGLItem) return;
+    const perfStart = Date.now();
 
     try {
       const originalLinks = new Set(this.documentModal.linkedDocumentIds);
@@ -1023,10 +1091,12 @@ class FARComplianceApp {
       
       this.closeLinkModal();
       try { await this.updateLLMControlsEnabled(); } catch (_) {}
+      this.logPerformance('Save Link Changes', perfStart, `${changeCount} updates`);
       
     } catch (error) {
       console.error('Error saving link changes:', error);
       alert('Error saving changes: ' + (error.message || error));
+      this.logPerformance('Save Link Changes (failed)', perfStart);
     }
   }
 
@@ -1038,6 +1108,7 @@ class FARComplianceApp {
   // END DOCUMENT MODAL METHODS
 
   async refreshDocsSummary() {
+    const perfStart = Date.now();
     try {
       if (!this.apiBaseUrl) return;
 
@@ -1051,10 +1122,12 @@ class FARComplianceApp {
         const total = this.docs.items.length;
         this.docs.summaryEl.textContent = `Items parsed: ${total}. Linked: ${linked}.`;
       }
-    } catch (_) {}
+      this.logPerformance('Refresh Docs Summary', perfStart, `${this.docs.items.length} items`);
+    } catch (_) { this.logPerformance('Refresh Docs Summary (failed)', perfStart); }
   }
 
   async refreshRequirementsSummary() {
+    const perfStart = Date.now();
     try {
       if (!this.apiBaseUrl) return;
       
@@ -1071,8 +1144,10 @@ class FARComplianceApp {
         }
       } catch (_) {}
       
+      this.logPerformance('Refresh Requirements Summary', perfStart, `${this.req.rows.length} rows`);
       return r;
     } catch (_) {
+      this.logPerformance('Refresh Requirements Summary (failed)', perfStart);
       return null;
     }
   }
@@ -1125,49 +1200,48 @@ class FARComplianceApp {
   }
 
   async processUploadedFile() {
+    const perfStart = Date.now();
     if (!this.uploadedFile) {
       alert("Please select a file first.");
       return;
     }
 
+    const processingIndicator = document.getElementById("processing-indicator");
     try {
+      if (processingIndicator) processingIndicator.classList.remove("hidden");
+
+      console.log('📁 Processing file:', this.uploadedFile.name);
       if (typeof XLSX === 'undefined') {
-        alert('Excel parser (XLSX) not loaded. Please ensure you are online and the page can access cdnjs.');
-        return;
+        throw new Error('Excel processing library not loaded. Please refresh the page and try again.');
       }
 
       const jsonData = await readExcelFile(this.uploadedFile);
+      console.log('📊 Raw Excel data:', jsonData.length, 'rows');
       this.glData = mapExcelRows(jsonData);
-
-      const weak = this.isWeakMapping(this.glData);
-      if (weak) {
-        const aoa = await readExcelAsAOA(this.uploadedFile);
-        const ok = await this.attemptAutoMappingFromAOA(aoa).catch(() => false);
-        if (!ok) {
-          this.prepareMappingUI(aoa);
-          return;
-        }
-      }
+      console.log('✅ Mapped GL data:', this.glData.length, 'entries');
 
       try {
         if (this.apiBaseUrl) {
-          const r = await saveGLEntries(this.apiBaseUrl, this.glData);
-          if (r && Array.isArray(r.ids)) {
-            this.glData = this.glData.map((row, i) => ({ ...row, id: r.ids[i] || row.id }));
+          const result = await saveGLEntries(this.apiBaseUrl, this.glData);
+          if (result && Array.isArray(result.ids)) {
+            this.glData = this.glData.map((row, i) => ({ ...row, id: result.ids[i] || row.id }));
           }
-          try { await this.updateDocsControlsEnabled(); } catch (_) {}
         }
-      } catch (e) {
-        console.warn('Failed to save GL entries to server:', e?.message || e);
+      } catch (serverError) {
+        console.warn('Server save failed (continuing with local data):', serverError.message);
       }
 
       this.runInitialAudit();
       this.renderGLTable();
       this.switchTab("review");
-      
-      alert(`Successfully processed ${this.glData.length} GL entries.`);
+      alert(`✅ Successfully processed ${this.glData.length} GL entries.`);
+      this.logPerformance('Excel Processing', perfStart, `${this.glData.length} rows`);
+      try { await this.updateDocsControlsEnabled(); } catch (_) {}
     } catch (error) {
-      alert("Error processing Excel file: " + error.message);
+      console.error('❌ File processing error:', error);
+      alert(`Processing failed: ${error.message}`);
+    } finally {
+      if (processingIndicator) processingIndicator.classList.add("hidden");
     }
   }
 
@@ -1235,6 +1309,7 @@ class FARComplianceApp {
   }
 
   runAudit() {
+    const perfStart = Date.now();
     console.log("runAudit() called");
     console.log("GL Data length:", this.glData?.length || 0);
     console.log("FAR Rules length:", this.farRules?.length || 0);
@@ -1282,6 +1357,7 @@ class FARComplianceApp {
 
       const message = `Audit completed successfully!\n\nProcessed: ${auditCount} items\nRed Flags: ${redCount}\nYellow Flags: ${yellowCount}\nTotal Violations: ${violationCount}\n\nResults updated in the table below.`;
       alert(message);
+      this.logPerformance('FAR Audit', perfStart, `${auditCount} items`);
 
       this.switchTab("review");
 
@@ -1294,10 +1370,12 @@ class FARComplianceApp {
       }
       
       alert("Error running audit: " + error.message);
+      this.logPerformance('FAR Audit (failed)', perfStart);
     }
   }
 
   async runLLMReview() {
+    const perfStart = Date.now();
     if (!this.apiBaseUrl) {
       alert('LLM review requires server API configuration.');
       return;
@@ -1327,13 +1405,16 @@ class FARComplianceApp {
         this.glData = result.enhanced;
         this.renderGLTable();
         alert('LLM review completed successfully.');
+        this.logPerformance('AI Review', perfStart, `${this.glData.length} items enhanced`);
       } else {
         alert('LLM review completed but no enhancements were made.');
+        this.logPerformance('AI Review', perfStart, 'no enhancements');
       }
 
       if (btn) btn.textContent = orig;
     } catch (err) {
       alert('AI review failed: ' + (err.message || err));
+      this.logPerformance('AI Review (failed)', perfStart);
       const btn = document.getElementById('llm-review-btn');
       if (btn) btn.textContent = 'AI Review';
     }
@@ -1414,6 +1495,33 @@ class FARComplianceApp {
       this.updateDashboard();
     } else if (tabName === "logs") {
       this.initializeLogsTab();
+    } else if (tabName === "review") {
+      // Default to GL Data Review subtab
+      this.switchSubtab("gl-review");
+    }
+  }
+
+  switchSubtab(subtabName) {
+    // Hide all subtab contents
+    document.querySelectorAll(".subtab-content").forEach((subtab) => {
+      subtab.classList.remove("active");
+    });
+
+    // Remove active from all subtab buttons
+    document.querySelectorAll(".subtab-btn").forEach((btn) => {
+      btn.classList.remove("active");
+    });
+
+    // Show selected subtab
+    const selectedSubtab = document.getElementById(`${subtabName}-subtab`);
+    const selectedBtn = document.querySelector(`[data-subtab="${subtabName}"]`);
+
+    if (selectedSubtab) selectedSubtab.classList.add("active");
+    if (selectedBtn) selectedBtn.classList.add("active");
+
+    // Load content for specific subtabs
+    if (subtabName === "doc-review") {
+      this.loadDocumentReview();
     }
   }
 
@@ -1430,6 +1538,7 @@ class FARComplianceApp {
   }
 
   generateReport() {
+    const perfStart = Date.now();
     try {
       const reportOptions = {
         auditResults: this.auditResults,
@@ -1452,18 +1561,23 @@ class FARComplianceApp {
       }
       
       this.switchTab("reports");
+      this.logPerformance('Generate Report', perfStart);
     } catch (error) {
       alert("Error generating report: " + error.message);
       console.error("Report generation error:", error);
+      this.logPerformance('Generate Report (failed)', perfStart);
     }
   }
 
   exportToPDF() {
+    const perfStart = Date.now();
     try {
       exportPDF(this.glData, this.auditResults, this.farRules);
+      this.logPerformance('Export PDF', perfStart);
     } catch (error) {
       alert("Error exporting to PDF: " + error.message);
       console.error("PDF export error:", error);
+      this.logPerformance('Export PDF (failed)', perfStart);
     }
   }
 
@@ -1472,6 +1586,7 @@ class FARComplianceApp {
   }
 
   async linkDocument(glId, docId) {
+    const perfStart = Date.now();
     if (!glId || !docId) {
       throw new Error('GL ID and Document ID are required');
     }
@@ -1491,13 +1606,16 @@ class FARComplianceApp {
           glItem.linked_documents.push(docId);
         }
       }
+      this.logPerformance('Link Document', perfStart, `gl:${glId} doc:${docId}`);
 
     } catch (err) {
+      this.logPerformance('Link Document (failed)', perfStart, `gl:${glId} doc:${docId}`);
       throw new Error('Failed to link document: ' + (err.message || err));
     }
   }
 
   async unlinkDocument(glId, docId) {
+    const perfStart = Date.now();
     try {
       if (!this.apiBaseUrl) {
         throw new Error('API not configured for document unlinking');
@@ -1510,8 +1628,10 @@ class FARComplianceApp {
       if (glItem && glItem.linked_documents) {
         glItem.linked_documents = glItem.linked_documents.filter(id => id !== docId);
       }
+      this.logPerformance('Unlink Document', perfStart, `gl:${glId} doc:${docId}`);
 
     } catch (err) {
+      this.logPerformance('Unlink Document (failed)', perfStart, `gl:${glId} doc:${docId}`);
       throw new Error('Failed to unlink document: ' + (err.message || err));
     }
   }
@@ -1534,6 +1654,386 @@ class FARComplianceApp {
     }
 
     return await response.json();
+  }
+
+  async loadDocumentReview() {
+    const perfStart = Date.now();
+    try {
+      await this.refreshDocumentTable();
+      await this.updateDocumentMetrics();
+      await this.setupDocumentFilters();
+      this.logPerformance('Load Document Review', perfStart);
+    } catch (error) {
+      console.error('Error loading document review:', error);
+      this.logPerformance('Load Document Review (failed)', perfStart);
+    }
+  }
+
+  async refreshDocumentTable() {
+    const perfStart = Date.now();
+    try {
+      if (!this.apiBaseUrl) return;
+
+      const data = await listDocItems(this.apiBaseUrl);
+
+      // Normalize document data to match frontend expectations
+      this.docs.documents = (data.documents || []).map(doc => ({
+        ...doc,
+        doctype: doc.doc_type || 'other',
+        uploadDate: doc.created_at,
+        size: doc.meta?.size || doc.size || 0,
+        mimetype: doc.mime_type || doc.mimetype
+      }));
+
+      this.docs.items = data.items || [];
+      this.docs.links = data.links || [];
+
+      console.log('Loaded documents for Document Review:', this.docs.documents.length);
+      this.renderDocumentTable();
+      this.logPerformance('Refresh Document Table', perfStart, `${this.docs.documents.length} docs`);
+    } catch (error) {
+      console.error('Error refreshing document table:', error);
+      this.logPerformance('Refresh Document Table (failed)', perfStart);
+    }
+  }
+
+  renderDocumentTable() {
+    const tableBody = document.getElementById('documents-table-body');
+    if (!tableBody) {
+      console.error('documents-table-body not found!');
+      return;
+    }
+
+    console.log('Rendering document table with', this.docs.documents.length, 'documents');
+    console.log('Sample document:', this.docs.documents[0]);
+
+    if (!this.docs.documents.length) {
+      tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #6b7280; padding: 20px;">No documents uploaded</td></tr>';
+      return;
+    }
+
+    const filteredDocs = this.getFilteredDocuments();
+    console.log('Filtered documents:', filteredDocs.length);
+
+    tableBody.innerHTML = filteredDocs.map(doc => {
+      const linkedCount = this.getLinkedGLItemsCount(doc.id);
+      const ocrStatus = this.getOCRStatus(doc);
+      const confidence = this.getDocumentConfidence(doc);
+
+      return `
+        <tr data-doc-id="${doc.id}">
+          <td>
+            <div class="document-preview">
+              ${this.renderDocumentPreview(doc)}
+            </div>
+          </td>
+          <td>
+            <div class="document-name">${doc.filename}</div>
+            <div class="document-meta" style="font-size: 12px; color: #6b7280;">
+              ${doc.id.substring(0, 8)}...
+            </div>
+          </td>
+          <td>
+            <span class="doc-type-badge ${doc.doctype || 'other'}">${doc.doctype || 'other'}</span>
+          </td>
+          <td>${this.formatFileSize(doc.size || 0)}</td>
+          <td>${doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString() : 'Unknown'}</td>
+          <td>
+            <span class="ocr-status ${ocrStatus.class}">${ocrStatus.text}</span>
+          </td>
+          <td>
+            <span class="linked-count">${linkedCount} item${linkedCount !== 1 ? 's' : ''}</span>
+          </td>
+          <td>
+            <span class="confidence-score ${this.getConfidenceClass(confidence)}">${confidence}%</span>
+          </td>
+          <td>
+            <div class="document-actions">
+              <button type="button" class="btn btn--small" onclick="window.app.viewDocument('${doc.id}')">View</button>
+              <button type="button" class="btn btn--small btn--outline" onclick="window.app.reprocessDocument('${doc.id}')">Reprocess</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  renderDocumentPreview(doc) {
+    if (this.isImageFile(doc.filename)) {
+      const previewUrl = this.getDocumentUrl(doc);
+      return `<img src="${previewUrl}" alt="${doc.filename}" style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;" onerror="this.style.display='none'">`;
+    } else if (this.isPdfFile(doc.filename)) {
+      return `<div class="pdf-icon" style="width: 40px; height: 40px; background: #ef4444; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold;">PDF</div>`;
+    } else {
+      return `<div class="doc-icon" style="width: 40px; height: 40px; background: #6b7280; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold;">DOC</div>`;
+    }
+  }
+
+  getFilteredDocuments() {
+    const searchTerm = document.getElementById('doc-search-input')?.value.toLowerCase() || '';
+    const typeFilter = document.getElementById('doc-type-filter-review')?.value || '';
+    const unprocessedOnly = document.getElementById('unprocessed-only')?.checked || false;
+
+    return this.docs.documents.filter(doc => {
+      const matchesSearch = !searchTerm ||
+        doc.filename.toLowerCase().includes(searchTerm) ||
+        (doc.text_content && doc.text_content.toLowerCase().includes(searchTerm));
+
+      const matchesType = !typeFilter || (doc.doctype || 'other') === typeFilter;
+
+      const matchesProcessed = !unprocessedOnly || !this.isDocumentProcessed(doc);
+
+      return matchesSearch && matchesType && matchesProcessed;
+    });
+  }
+
+  getLinkedGLItemsCount(docId) {
+    // Links connect document_item_id to gl_entry_id
+    // We need to find items that belong to this document, then count their links
+    const documentItems = this.docs.items.filter(item => item.document_id === docId);
+    const documentItemIds = documentItems.map(item => item.id);
+    return this.docs.links.filter(link => documentItemIds.includes(link.document_item_id)).length;
+  }
+
+  getOCRStatus(doc) {
+    if (doc.text_content && doc.text_content.length > 10) {
+      return { class: 'processed', text: 'Processed' };
+    } else if (doc.text_content && doc.text_content.includes('processing')) {
+      return { class: 'processing', text: 'Processing' };
+    } else {
+      return { class: 'pending', text: 'Pending' };
+    }
+  }
+
+  getDocumentConfidence(doc) {
+    if (doc.meta && doc.meta.confidence) {
+      return Math.round(doc.meta.confidence * 100);
+    }
+    return doc.text_content && doc.text_content.length > 10 ? 85 : 0;
+  }
+
+  getConfidenceClass(confidence) {
+    if (confidence >= 80) return 'high';
+    if (confidence >= 50) return 'medium';
+    return 'low';
+  }
+
+  isDocumentProcessed(doc) {
+    return doc.text_content && doc.text_content.length > 10;
+  }
+
+  async updateDocumentMetrics() {
+    const totalDocs = this.docs.documents.length;
+    const processedDocs = this.docs.documents.filter(doc => this.isDocumentProcessed(doc)).length;
+
+    // Calculate linked documents correctly
+    const linkedDocumentIds = new Set();
+    this.docs.links.forEach(link => {
+      const docItem = this.docs.items.find(item => item.id === link.document_item_id);
+      if (docItem) {
+        linkedDocumentIds.add(docItem.document_id);
+      }
+    });
+    const linkedDocs = linkedDocumentIds.size;
+
+    const pendingDocs = totalDocs - processedDocs;
+
+    const elements = {
+      'total-documents': totalDocs,
+      'processed-documents': processedDocs,
+      'linked-documents': linkedDocs,
+      'pending-documents': pendingDocs
+    };
+
+    Object.entries(elements).forEach(([id, value]) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    });
+  }
+
+  setupDocumentFilters() {
+    const searchInput = document.getElementById('doc-search-input');
+    const typeFilter = document.getElementById('doc-type-filter-review');
+    const unprocessedOnly = document.getElementById('unprocessed-only');
+
+    if (searchInput && !searchInput.dataset.bound) {
+      searchInput.addEventListener('input', this.debounce(() => {
+        this.renderDocumentTable();
+      }, 300));
+      searchInput.dataset.bound = 'true';
+    }
+
+    if (typeFilter && !typeFilter.dataset.bound) {
+      typeFilter.addEventListener('change', () => {
+        this.renderDocumentTable();
+      });
+      typeFilter.dataset.bound = 'true';
+    }
+
+    if (unprocessedOnly && !unprocessedOnly.dataset.bound) {
+      unprocessedOnly.addEventListener('change', () => {
+        this.renderDocumentTable();
+      });
+      unprocessedOnly.dataset.bound = 'true';
+    }
+  }
+
+  async runAzureOCR() {
+    const perfStart = Date.now();
+    const btn = document.getElementById('azure-ocr-btn');
+    const statusHint = document.getElementById('ocr-status-hint');
+
+    if (!this.apiBaseUrl) {
+      alert('Azure OCR requires server API configuration.');
+      return;
+    }
+
+    if (!this.docs.documents || this.docs.documents.length === 0) {
+      alert('No documents available for OCR processing. Please upload documents first.');
+      return;
+    }
+
+    try {
+      const originalText = btn ? btn.textContent : '';
+      if (btn) btn.textContent = 'Processing OCR...';
+      if (statusHint) {
+        statusHint.textContent = 'Running Tesseract OCR on all uploaded documents...';
+        statusHint.style.display = '';
+      }
+
+      // Process all documents that haven't been processed yet
+      const unprocessedDocs = this.docs.documents.filter(doc => !this.isDocumentProcessed(doc));
+
+      if (unprocessedDocs.length === 0) {
+        alert('All documents have already been processed.');
+        return;
+      }
+
+      let processedCount = 0;
+      let errorCount = 0;
+
+      for (const doc of unprocessedDocs) {
+        try {
+          if (statusHint) {
+            statusHint.textContent = `Processing ${processedCount + 1} of ${unprocessedDocs.length}: ${doc.filename}`;
+          }
+
+          // Call the reprocess endpoint for each document
+          const response = await fetch(`${this.apiBaseUrl}/api/docs/reprocess`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              document_id: doc.id
+            })
+          });
+
+          if (response.ok) {
+            processedCount++;
+            console.log(`Successfully processed: ${doc.filename}`);
+          } else {
+            errorCount++;
+            console.error(`Failed to process: ${doc.filename}`);
+          }
+        } catch (error) {
+          errorCount++;
+          console.error(`Error processing ${doc.filename}:`, error);
+        }
+      }
+
+      // Refresh the document data and table
+      await this.refreshDocumentTable();
+      await this.updateDocumentMetrics();
+
+      const message = `OCR processing completed!\n\nProcessed: ${processedCount}\nErrors: ${errorCount}\nTotal: ${unprocessedDocs.length}`;
+      alert(message);
+
+      this.logPerformance('Azure OCR', perfStart, `${processedCount} docs processed`);
+
+    } catch (error) {
+      console.error('Azure OCR error:', error);
+      alert('OCR processing failed: ' + (error.message || error));
+      this.logPerformance('Azure OCR (failed)', perfStart);
+    } finally {
+      if (btn) btn.textContent = 'Run Azure OCR';
+      if (statusHint) {
+        statusHint.textContent = '';
+        statusHint.style.display = 'none';
+      }
+    }
+  }
+
+  async refreshDocuments() {
+    const perfStart = Date.now();
+    try {
+      await this.refreshDocumentTable();
+      await this.updateDocumentMetrics();
+      console.log('Documents refreshed successfully');
+      this.logPerformance('Refresh Documents', perfStart);
+    } catch (error) {
+      console.error('Error refreshing documents:', error);
+      alert('Failed to refresh documents: ' + (error.message || error));
+      this.logPerformance('Refresh Documents (failed)', perfStart);
+    }
+  }
+
+  async viewDocument(docId) {
+    const doc = this.docs.documents.find(d => d.id === docId);
+    if (!doc) {
+      alert('Document not found');
+      return;
+    }
+
+    const url = this.getDocumentUrl(doc);
+    window.open(url, '_blank');
+  }
+
+  async reprocessDocument(docId) {
+    const doc = this.docs.documents.find(d => d.id === docId);
+    if (!doc) {
+      alert('Document not found');
+      return;
+    }
+
+    if (!confirm(`Reprocess "${doc.filename}" with OCR?`)) {
+      return;
+    }
+
+    const perfStart = Date.now();
+    try {
+      const response = await fetch(`${this.apiBaseUrl}/api/docs/reprocess`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          document_id: docId,
+          force_reprocess: true
+        })
+      });
+
+      if (response.ok) {
+        await this.refreshDocumentTable();
+        await this.updateDocumentMetrics();
+        alert(`Successfully reprocessed "${doc.filename}"`);
+        this.logPerformance('Reprocess Document', perfStart, doc.filename);
+      } else {
+        throw new Error(`Failed to reprocess document: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Reprocess error:', error);
+      alert('Failed to reprocess document: ' + (error.message || error));
+      this.logPerformance('Reprocess Document (failed)', perfStart, doc.filename);
+    }
+  }
+  // Performance logging helper
+  logPerformance(operation, startTime, data) {
+    try {
+      const duration = Date.now() - startTime;
+      console.log(`⏱️ ${operation}: ${duration}ms`, data ? `(${data})` : '');
+      if (duration > 2000) console.warn(`🐌 Slow operation detected: ${operation} took ${duration}ms`);
+    } catch (_) {}
   }
 }
 

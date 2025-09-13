@@ -2,26 +2,49 @@
 
 export function readExcelFile(file) {
   return new Promise((resolve, reject) => {
-    if (typeof XLSX === 'undefined') {
-      reject(new Error('XLSX library not loaded. Please ensure you are online and the page can access cdnjs.'));
-      return;
-    }
-    
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: "array" });
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        // Use sheet_to_json to produce objects with headers; keep raw values where possible
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
-        resolve(jsonData);
-      } catch (err) {
-        reject(err);
+    // Better XLSX detection with timeout
+    const checkXLSX = (attempts = 0) => {
+      if (typeof XLSX !== 'undefined') {
+        processFile();
+        return;
+      }
+      if (attempts < 10) { // 5 seconds total
+        setTimeout(() => checkXLSX(attempts + 1), 500);
+      } else {
+        reject(new Error(`
+          Excel library (XLSX) not loaded. Please:
+          1. Check your internet connection
+          2. Refresh the page
+          3. Try again in a few moments
+          
+          If the problem persists, the CDN may be unavailable.
+        `));
       }
     };
-    reader.onerror = reject;
-    reader.readAsArrayBuffer(file);
+
+    const processFile = () => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          console.log('Processing Excel file...');
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: "array" });
+          if (!workbook.SheetNames || !workbook.SheetNames.length) {
+            throw new Error('No worksheets found in Excel file');
+          }
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+          console.log(`✅ Excel processed: ${jsonData.length} rows`);
+          resolve(jsonData);
+        } catch (err) {
+          reject(new Error(`Excel processing failed: ${err.message}`));
+        }
+      };
+      reader.onerror = () => reject(new Error('File reading failed'));
+      reader.readAsArrayBuffer(file);
+    };
+
+    checkXLSX();
   });
 }
 
