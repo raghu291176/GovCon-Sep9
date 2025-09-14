@@ -144,3 +144,22 @@ uploads/
 *.sqlite-shm
 *.traineddata
 temp_uploads/
+
+# User input files - documents uploaded by users
+*.pdf
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.tif
+*.svg
+*.webp
+*.ico
+*.psd
+*.raw

@@ -63,10 +63,42 @@ async function processDocumentWorkflow(imageBuffer, glEntries, options = {}) {
                 amount: processingResult.data.amount.value,
                 date: processingResult.data.date.value,
                 merchant: processingResult.data.merchant.value,
+                description: processingResult.data.description?.value || null,
+                summary: processingResult.data.summary?.value || null,
+                // Additional receipt fields (will be null for invoices)
+                receiptType: processingResult.data.receiptType?.value || null,
+                merchantPhone: processingResult.data.merchantPhone?.value || null,
+                merchantAddress: processingResult.data.merchantAddress?.value || null,
+                transactionTime: processingResult.data.transactionTime?.value || null,
+                subtotal: processingResult.data.subtotal?.value || null,
+                tax: processingResult.data.tax?.value || null,
+                tip: processingResult.data.tip?.value || null,
+                // Additional invoice fields (will be null for receipts)
+                invoiceId: processingResult.data.invoiceId?.value || null,
+                customerName: processingResult.data.customerName?.value || null,
+                billingAddress: processingResult.data.billingAddress?.value || null,
+                subTotal: processingResult.data.subTotal?.value || null,
+                dueDate: processingResult.data.dueDate?.value || null,
                 confidence_scores: {
                     amount: processingResult.data.amount.confidence,
                     date: processingResult.data.date.confidence,
                     merchant: processingResult.data.merchant.confidence,
+                    description: processingResult.data.description?.confidence || 0,
+                    summary: processingResult.data.summary?.confidence || 0,
+                    // Receipt-specific confidence scores
+                    receiptType: processingResult.data.receiptType?.confidence || 0,
+                    merchantPhone: processingResult.data.merchantPhone?.confidence || 0,
+                    merchantAddress: processingResult.data.merchantAddress?.confidence || 0,
+                    transactionTime: processingResult.data.transactionTime?.confidence || 0,
+                    subtotal: processingResult.data.subtotal?.confidence || 0,
+                    tax: processingResult.data.tax?.confidence || 0,
+                    tip: processingResult.data.tip?.confidence || 0,
+                    // Invoice-specific confidence scores
+                    invoiceId: processingResult.data.invoiceId?.confidence || 0,
+                    customerName: processingResult.data.customerName?.confidence || 0,
+                    billingAddress: processingResult.data.billingAddress?.confidence || 0,
+                    subTotal: processingResult.data.subTotal?.confidence || 0,
+                    dueDate: processingResult.data.dueDate?.confidence || 0,
                     overall: processingResult.data.confidence || 0
                 }
             },
@@ -78,6 +110,12 @@ async function processDocumentWorkflow(imageBuffer, glEntries, options = {}) {
                 tesseract_text_length: tesseractResult.rawText.length,
                 gl_entries_processed: processedGLEntries.length,
                 match_options: matchOptions
+            },
+            ocr_data: {
+                raw_text: tesseractResult.rawText || '',
+                success: tesseractResult.success,
+                confidence: tesseractResult.confidence || 0,
+                method: isPDF ? 'skipped_pdf' : 'tesseract'
             }
         };
         
@@ -87,7 +125,7 @@ async function processDocumentWorkflow(imageBuffer, glEntries, options = {}) {
     } catch (error) {
         const processingTime = Date.now() - startTime;
         console.error(`[${documentId}] Workflow failed:`, error);
-        
+
         return {
             document_id: documentId,
             processing_method: 'unknown',
@@ -99,6 +137,12 @@ async function processDocumentWorkflow(imageBuffer, glEntries, options = {}) {
             metadata: {
                 timestamp: new Date().toISOString(),
                 failure_stage: identifyFailureStage(error.message)
+            },
+            ocr_data: {
+                raw_text: '',
+                success: false,
+                confidence: 0,
+                method: isPDF ? 'skipped_pdf' : 'failed'
             }
         };
     }

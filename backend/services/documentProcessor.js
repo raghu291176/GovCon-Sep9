@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { analyzeDocument as analyzeWithContentUnderstanding } from './contentUnderstandingService.js';
+import { analyzeReceipt, analyzeInvoice } from './documentIntelligenceService.js';
 
 /**
  * Enhanced document processing with Azure AI Vision object detection
@@ -39,27 +39,33 @@ async function processDocument(imageBuffer, tesseractResult, options = {}) {
         const tesseractFailed = isTesseractFailed(tesseractResult);
         const isPDF = options.fileType && /pdf/i.test(options.fileType || '');
         if (classification.documentType === 'receipt') {
-            console.log('Processing as Receipt with Content Understanding...');
-            const receiptAnalyzerId = process.env.CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID || 'receipt-analyzer';
-            result = await analyzeWithContentUnderstanding(receiptAnalyzerId, imageBuffer, { mimeType: options.fileType, preferBinary: true });
+            console.log('Processing as Receipt with Document Intelligence...');
+            try {
+                result = await analyzeReceipt(imageBuffer);
+            } catch (error) {
+                console.log('Document Intelligence failed, falling back to OCR text extraction...');
+                result = extractFromTextRegex(extractedText, 'receipt');
+            }
         } else if (classification.documentType === 'invoice') {
-            console.log('Processing as Invoice with Content Understanding...');
-            const invoiceAnalyzerId = process.env.CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID || 'invoice-analyzer';
-            result = await analyzeWithContentUnderstanding(invoiceAnalyzerId, imageBuffer, { mimeType: options.fileType, preferBinary: true });
+            console.log('Processing as Invoice with Document Intelligence...');
+            try {
+                result = await analyzeInvoice(imageBuffer);
+            } catch (error) {
+                console.log('Document Intelligence failed, falling back to OCR text extraction...');
+                result = extractFromTextRegex(extractedText, 'invoice');
+            }
         } else {
             if (tesseractFailed && !isPDF) {
                 console.log('Tesseract failed/weak; using Azure Foundry Mistral OCR...');
                 result = await processWithMistralOCR(imageBuffer, { mimeType: options.fileType });
             } else {
-                console.log('Using Content Understanding fallback for unknown type or OCR text regex extraction...');
+                console.log('Using OCR text regex extraction for unknown type...');
                 if (isPDF) {
-                    // For PDFs, avoid Mistral; default to receipt analyzer if unknown
-                    const fallbackAnalyzerId = (inferDocTypeByFilename(options.filename) === 'invoice')
-                      ? (process.env.CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID || 'invoice-analyzer')
-                      : (process.env.CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID || 'receipt-analyzer');
-                    result = await analyzeWithContentUnderstanding(fallbackAnalyzerId, imageBuffer, { mimeType: options.fileType, preferBinary: true });
+                    // For PDFs, extract using regex based on filename inference
+                    const docType = inferDocTypeByFilename(options.filename) || 'receipt';
+                    result = extractFromTextRegex(extractedText, docType);
                 } else {
-                    result = extractFromTextRegex(extractedText);
+                    result = extractFromTextRegex(extractedText, 'other');
                 }
             }
         }
@@ -280,21 +286,29 @@ function isTesseractFailed(ocr) {
     }
 }
 
-function extractFromTextRegex(text) {
+function extractFromTextRegex(text, docType = 'receipt') {
     try {
         const extracted = extractWithRegex(String(text || ''));
         const normalizedAmount = normalizeAmount(extracted.amount);
         const normalizedDate = normalizeDate(extracted.date);
         const normalizedMerchant = normalizeMerchant(extracted.merchant);
+
+        // Extract description from text (simple approach)
+        const description = extractDescription(text, docType);
+        const summary = createSummary(normalizedMerchant.value, normalizedAmount.value, normalizedDate.value, docType);
+
         const extractedFields = [normalizedAmount.value, normalizedDate.value, normalizedMerchant.value].filter(v => v !== null).length;
         const overallConfidence = extractedFields / 3;
+
         return {
             method: 'tesseract_regex',
             success: true,
             data: {
                 amount: normalizedAmount,
-                date: normalizedDate, 
+                date: normalizedDate,
                 merchant: normalizedMerchant,
+                description: description,
+                summary: summary,
                 confidence: overallConfidence
             }
         };
@@ -339,6 +353,67 @@ function normalizeMerchant(merchant) {
 }
 
 // Removed: calculateConfidence - Content Understanding provides confidence internally
+
+/**
+ * Extract description from OCR text
+ */
+function extractDescription(text, docType) {
+    if (!text) return { value: null, confidence: 0 };
+
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    // Look for item descriptions (words that might be products/services)
+    const possibleDescriptions = lines.filter(line => {
+        // Skip lines that are obviously amounts, dates, or addresses
+        if (/^\$?\d+\.?\d*$/.test(line)) return false; // amounts
+        if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(line)) return false; // dates
+        if (line.length < 3) return false; // too short
+        if (line.length > 100) return false; // too long
+        return true;
+    });
+
+    if (possibleDescriptions.length > 0) {
+        // Take the first few relevant items
+        const description = possibleDescriptions.slice(0, 3).join('; ');
+        return {
+            value: description,
+            confidence: 0.6
+        };
+    }
+
+    return { value: null, confidence: 0 };
+}
+
+/**
+ * Create a summary from extracted fields
+ */
+function createSummary(merchant, amount, date, docType) {
+    const parts = [];
+    const docTypeName = docType === 'invoice' ? 'Invoice' : 'Receipt';
+
+    if (merchant) {
+        parts.push(`${docTypeName} from ${merchant}`);
+    } else {
+        parts.push(`${docTypeName}`);
+    }
+
+    if (amount) {
+        parts.push(`Total: $${amount}`);
+    }
+
+    if (date) {
+        parts.push(`Date: ${date}`);
+    }
+
+    if (parts.length > 1) {
+        return {
+            value: parts.join(' | '),
+            confidence: 0.7
+        };
+    }
+
+    return { value: null, confidence: 0 };
+}
 
 export {
     processDocument,

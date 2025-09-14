@@ -94,20 +94,20 @@ async function findGLMatches(extractedData, glEntries, options = {}) {
     
     const candidateEntries = glEntries.filter(entry => {
         if (!entry) return false;
-        
-        if (extractedData.date.value && entry.date) {
+
+        if (extractedData.date?.value && entry.date) {
             const extractedDate = moment(extractedData.date.value);
             const glDate = moment(entry.date);
             const daysDiff = Math.abs(extractedDate.diff(glDate, 'days'));
-            
+
             if (daysDiff > maxDateDiff) return false;
         }
-        
-        if (extractedData.amount.value && entry.amount) {
+
+        if (extractedData.amount?.value && entry.amount) {
             const amountDiff = Math.abs(extractedData.amount.value - entry.amount);
             if (amountDiff > maxAmountDiff) return false;
         }
-        
+
         return true;
     });
     
@@ -163,8 +163,8 @@ async function findGLMatches(extractedData, glEntries, options = {}) {
 
 function identifyDiscrepancies(extractedData, glEntry) {
     const discrepancies = [];
-    
-    if (extractedData.amount.value && glEntry.amount) {
+
+    if (extractedData.amount?.value && glEntry.amount) {
         const amountDiff = Math.abs(extractedData.amount.value - glEntry.amount);
         if (amountDiff > 0.01) {
             discrepancies.push({
@@ -176,12 +176,12 @@ function identifyDiscrepancies(extractedData, glEntry) {
             });
         }
     }
-    
-    if (extractedData.date.value && glEntry.date) {
+
+    if (extractedData.date?.value && glEntry.date) {
         const extractedDate = moment(extractedData.date.value);
         const glDate = moment(glEntry.date);
         const daysDiff = extractedDate.diff(glDate, 'days');
-        
+
         if (daysDiff !== 0) {
             discrepancies.push({
                 field: 'date',
@@ -192,10 +192,10 @@ function identifyDiscrepancies(extractedData, glEntry) {
             });
         }
     }
-    
-    if (extractedData.merchant.value && glEntry.vendor) {
+
+    if (extractedData.merchant?.value && glEntry.vendor) {
         const similarity = vendorSimilarity(extractedData.merchant.value, glEntry.vendor);
-        
+
         if (similarity < 0.9) {
             discrepancies.push({
                 field: 'vendor',
@@ -205,15 +205,15 @@ function identifyDiscrepancies(extractedData, glEntry) {
             });
         }
     }
-    
+
     return discrepancies;
 }
 
 function calculateConfidenceFactors(extractedData, glEntry, matchScore) {
     const factors = {
-        amount_confidence: extractedData.amount.confidence || 0,
-        date_confidence: extractedData.date.confidence || 0,
-        merchant_confidence: extractedData.merchant.confidence || 0,
+        amount_confidence: extractedData.amount?.confidence || 0,
+        date_confidence: extractedData.date?.confidence || 0,
+        merchant_confidence: extractedData.merchant?.confidence || 0,
         match_score: matchScore,
         overall_confidence: 0
     };

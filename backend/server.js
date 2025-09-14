@@ -14,7 +14,8 @@ import { setupSQLite } from './persistence/sqlite.js';
 import { loadAllConfigs as loadFileConfigs, saveConfig as saveFileConfig } from './persistence/fileStore.js';
 import documentRoutes from './routes/documentRoutes.js';
 import { processDocumentWorkflow } from './services/documentWorkflow.js';
-import { initializeAnalyzers } from './services/contentUnderstandingService.js';
+// Content Understanding service replaced with Document Intelligence
+// import { initializeAnalyzers } from './services/contentUnderstandingService.js';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -1573,10 +1574,10 @@ app.post('/api/logs', (req, res) => {
   }
 });
 
-// Initialize Content Understanding analyzers on startup
-initializeAnalyzers().catch(err => {
-  console.warn('Content Understanding analyzers initialization failed (service may have limited functionality):', err.message);
-});
+// Content Understanding analyzers initialization removed - using Document Intelligence now
+// initializeAnalyzers().catch(err => {
+//   console.warn('Content Understanding analyzers initialization failed (service may have limited functionality):', err.message);
+// });
 
 app.listen(port, () => {
   console.log(`API listening on :${port}`);
@@ -1744,7 +1745,10 @@ app.post('/api/docs/reprocess', express.json(), async (req, res) => {
             extracted_data: result.extracted_data,
             confidence_scores: result.extracted_data?.confidence_scores,
             text_extracted: doc.text_content,
-            processing_status: result.processing_status
+            processing_status: result.processing_status,
+            ocr_data: result.ocr_data,
+            gl_matches: result.gl_matches,
+            metadata: result.metadata
           }
         });
       } else {
@@ -1754,7 +1758,9 @@ app.post('/api/docs/reprocess', express.json(), async (req, res) => {
           success: false,
           error: 'Document processing failed',
           code: 'PROCESSING_FAILED',
-          details: result.error_messages
+          details: result.error_messages,
+          ocr_data: result.ocr_data || null,
+          metadata: result.metadata || null
         });
       }
 

@@ -1860,7 +1860,7 @@ class FARComplianceApp {
                 </div>
               </td>
               <td>
-                <div class="document-name" title="${doc.filename}">${this.truncateText(doc.filename, 30)}</div>
+                <div class="document-name" title="${doc.filename}">${this.getFileExtension(doc.filename)}</div>
                 <div class="document-meta" style="font-size: 12px; color: #6b7280;" title="${doc.id}">
                   ID: ${doc.id.substring(0, 8)}...
                 </div>
@@ -2270,6 +2270,12 @@ class FARComplianceApp {
   isPdfFile(filename) {
     if (!filename) return false;
     return filename.toLowerCase().endsWith('.pdf');
+  }
+
+  getFileExtension(filename) {
+    if (!filename) return 'unknown';
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext ? `.${ext}` : 'no ext';
   }
 
   getDocumentUrl(doc) {

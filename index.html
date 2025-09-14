@@ -1069,7 +1069,11 @@
                                     <th>Date</th>
                                     <th>Category</th>
                                     <th>Vendor</th>
-                                    <th>Attachments</th>
+                                    <th>Linked Docs</th>
+                                    <th>OCR Amount</th>
+                                    <th>OCR Date</th>
+                                    <th>OCR Merchant</th>
+                                    <th>Match Score</th>
                                     <th>Actions</th>
                                     <th>Approval</th>
                                     <th>FAR Issue</th>
@@ -1682,7 +1686,7 @@
                 } else {
                     tableBody.innerHTML = `
                         <tr>
-                            <td colspan="5" style="text-align: center; padding: 40px; color: #6b7280;">
+                            <td colspan="15" style="text-align: center; padding: 40px; color: #6b7280;">
                                 <div>No GL data found</div>
                                 <div style="font-size: 14px; margin-top: 8px;">
                                     Please upload and process an Excel file in the "Upload & Process" tab first.
@@ -1695,7 +1699,7 @@
                 console.error('Error loading GL data:', error);
                 tableBody.innerHTML = `
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 20px; color: #ef4444;">
+                        <td colspan="15" style="text-align: center; padding: 20px; color: #ef4444;">
                             Error loading GL data: ${error.message}
                         </td>
                     </tr>
@@ -1720,10 +1724,44 @@
                     <td>${entry.account || entry.accountNumber || 'N/A'}</td>
                     <td>${entry.description || 'N/A'}</td>
                     <td>$${formatAmount(entry.amount || entry.value || 0)}</td>
+                    <td>${entry.date || 'N/A'}</td>
+                    <td>${entry.category || 'N/A'}</td>
+                    <td>${entry.vendor || 'N/A'}</td>
+                    <td>
+                        <span class="linked-docs-count">${entry.linkedDocuments ? entry.linkedDocuments.length : 0} docs</span>
+                    </td>
+                    <td>
+                        <span class="ocr-amount" title="OCR extracted amount">
+                            ${entry.ocrData?.amount ? '$' + formatAmount(entry.ocrData.amount) : 'N/A'}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="ocr-date" title="OCR extracted date">
+                            ${entry.ocrData?.date || 'N/A'}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="ocr-merchant" title="OCR extracted merchant">
+                            ${entry.ocrData?.merchant || 'N/A'}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="match-score ${entry.matchScore >= 90 ? 'high-match' : entry.matchScore >= 70 ? 'medium-match' : 'low-match'}" title="Automatic matching score">
+                            ${entry.matchScore ? entry.matchScore + '%' : 'N/A'}
+                        </span>
+                    </td>
                     <td>
                         <button class="btn btn--outline btn--small" onclick="viewGLDetails(${index})">
                             View Details
                         </button>
+                    </td>
+                    <td>
+                        <span class="approval-status ${entry.approved ? 'approved' : 'pending'}">${entry.approved ? 'Approved' : 'Pending'}</span>
+                    </td>
+                    <td>
+                        <span class="far-issue ${entry.farIssue ? 'has-issue' : 'no-issue'}" title="${entry.farIssue || 'No issues detected'}">
+                            ${entry.farIssue ? 'Issue' : 'OK'}
+                        </span>
                     </td>
                 `;
                 tableBody.appendChild(row);
