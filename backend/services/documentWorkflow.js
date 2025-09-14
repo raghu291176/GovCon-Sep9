@@ -9,18 +9,31 @@ function generateDocumentId() {
 async function processDocumentWorkflow(imageBuffer, glEntries, options = {}) {
     const documentId = generateDocumentId();
     const startTime = Date.now();
-    
+    const isPDF = options.fileType && /pdf/i.test(options.fileType);
+
     try {
         console.log(`[${documentId}] Starting document processing workflow`);
-        
-        const tesseractResult = await performTesseractOCR(imageBuffer);
-        if (!tesseractResult.success) {
-            throw new Error(`Tesseract OCR failed: ${tesseractResult.error}`);
+
+        let tesseractResult = null;
+
+        // Skip Tesseract OCR for PDF files as it doesn't support them
+        if (isPDF) {
+            console.log(`[${documentId}] Skipping Tesseract OCR for PDF file`);
+            tesseractResult = {
+                success: false,
+                extractedText: '',
+                rawText: '',
+                confidence: 0
+            };
+        } else {
+            tesseractResult = await performTesseractOCR(imageBuffer);
+            if (!tesseractResult.success) {
+                throw new Error(`Tesseract OCR failed: ${tesseractResult.error}`);
+            }
+            console.log(`[${documentId}] Tesseract OCR completed successfully`);
         }
-        
-        console.log(`[${documentId}] Tesseract OCR completed successfully`);
-        
-        const processingResult = await processDocument(imageBuffer, tesseractResult.extractedText);
+
+        const processingResult = await processDocument(imageBuffer, tesseractResult, { fileType: options.fileType, filename: options.filename });
         if (!processingResult.success) {
             throw new Error(`Document processing failed: ${processingResult.error}`);
         }
@@ -120,11 +133,12 @@ async function batchProcessDocuments(documents, glEntries, options = {}) {
         
         try {
             const result = await processDocumentWorkflow(
-                document.buffer, 
-                processedGLEntries, 
+                document.buffer,
+                processedGLEntries,
                 {
                     ...options,
-                    documentName: document.name || `document_${i + 1}`
+                    documentName: document.name || `document_${i + 1}`,
+                    fileType: document.mimetype
                 }
             );
             

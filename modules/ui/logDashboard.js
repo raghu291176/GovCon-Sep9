@@ -335,12 +335,14 @@ export async function initializeLogDashboard() {
         loadRecentLogs()
     ]);
 
-    // Set up auto-refresh
+    // Start live stream for recent logs (SSE)
+    try { startLogStream(); } catch (e) { console.warn('SSE not available, using polling only'); }
+
+    // Keep analytics and health fresh (lighter endpoints)
     logRefreshInterval = setInterval(() => {
         updateLogAnalytics();
         updateSystemHealth();
-        loadRecentLogs();
-    }, 30000); // Refresh every 30 seconds
+    }, 30000); // Refresh analytics/health every 30 seconds
 }
 
 export function destroyLogDashboard() {
@@ -531,6 +533,42 @@ window.refreshLogs = function() {
     updateSystemHealth();
     loadRecentLogs();
 };
+
+function startLogStream() {
+    const container = document.getElementById('logs-table');
+    const countElement = document.getElementById('log-count');
+    if (!container) return;
+
+    const es = new EventSource('/api/logs/stream');
+    const maxEntries = 200;
+
+    es.onmessage = (ev) => {
+        try {
+            const log = JSON.parse(ev.data);
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${log.level}`;
+            entry.innerHTML = `
+                <div>
+                    <span class="log-timestamp">${new Date(log.timestamp).toLocaleString()}</span>
+                    <span class="log-level ${log.level}">${log.level}</span>
+                    <span class="log-category">${log.category}</span>
+                </div>
+                <div class="log-message">${log.message}</div>
+            `;
+            container.prepend(entry);
+            while (container.childElementCount > maxEntries) container.lastElementChild.remove();
+            if (countElement) countElement.textContent = container.childElementCount;
+        } catch (_) {}
+    };
+
+    es.onerror = () => {
+        // Fall back to polling if stream fails
+        es.close();
+        console.warn('Log stream disconnected; falling back to polling');
+        // Aggressive polling fallback for recent logs
+        setInterval(() => loadRecentLogs(), 5000);
+    };
+}
 
 window.clearOldLogs = async function() {
     if (!confirm('Clear old logs? This will remove logs older than 7 days.')) {

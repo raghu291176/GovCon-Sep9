@@ -253,6 +253,7 @@ class FARComplianceApp {
     bindEvent("export-pdf-btn", "click", this.exportToPDF, "Export to PDF");
     bindEvent("azure-ocr-btn", "click", this.runAzureOCR, "Run Azure OCR");
     bindEvent("refresh-docs-btn", "click", this.refreshDocuments, "Refresh documents");
+    bindEvent("debug-docs-btn", "click", this.debugDocuments, "Debug documents");
 
     document.querySelectorAll(".tab-btn").forEach((btn) => {
       if (btn.dataset.tabBound === 'true') return;
@@ -424,6 +425,7 @@ class FARComplianceApp {
       const list = Array.from(files);
       if (!list.length) {
         if (statusEl) statusEl.textContent = 'No files selected.';
+        if (this.showToast) this.showToast('No files selected.', 'warn');
         return;
       }
 
@@ -452,6 +454,29 @@ class FARComplianceApp {
           
           const codexResults = (resp?.results || []).filter(r => r.codexprocessing);
           codexCount += codexResults.length;
+          // Handle duplicate notifications and optional replacement
+          const duplicates = (resp?.results || []).filter(r => r && r.code && (r.code === 'DUPLICATE_NAME' || r.code === 'DUPLICATE_EXACT'));
+          for (const d of duplicates) {
+            if (d.code === 'DUPLICATE_EXACT') {
+              if (this.showToast) this.showToast(`Already uploaded (exact match): ${d.filename}`, 'info');
+              continue;
+            }
+            // Same name, different content -> ask user
+            const toReplace = this.confirmAsync ? (await this.confirmAsync(`A document named "${d.filename}" already exists. Replace it?`)) : confirm(`A document named "${d.filename}" already exists. Replace it?`);
+            if (toReplace) {
+              const fileObj = batch.find(f => f.name === d.filename);
+              if (fileObj) {
+                try {
+                  const replaceResp = await ingestDocuments(this.apiBaseUrl, [fileObj], { duplicateAction: 'replace' });
+                  console.log('Replace response:', replaceResp);
+                  if (this.showToast) this.showToast(`Replaced: ${d.filename}`, 'success');
+                } catch (e) {
+                  console.error('Replace failed for', d.filename, e);
+                  if (this.showToast) this.showToast(`Failed to replace ${d.filename}: ${e?.message || e}`, 'error');
+                }
+              }
+            }
+          }
           
           if (codexResults.length > 0) {
             console.log('Codex enhanced processing used for', codexResults.length, 'documents', 
@@ -1057,6 +1082,36 @@ class FARComplianceApp {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
+  // UI helpers: non-blocking toasts and async confirm
+  showToast(message, type = 'info', duration = 4000) {
+    try {
+      const containerId = 'toast-container';
+      let container = document.getElementById(containerId);
+      if (!container) {
+        container = document.createElement('div');
+        container.id = containerId;
+        container.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+        document.body.appendChild(container);
+      }
+      const el = document.createElement('div');
+      el.textContent = message;
+      el.style.cssText = 'padding:10px 14px;border-radius:6px;color:#fff;box-shadow:0 4px 10px rgba(0,0,0,0.15);font-size:13px;max-width:360px;';
+      const colors = { success: '#16a34a', error: '#dc2626', warn: '#f59e0b', info: '#2563eb' };
+      el.style.background = colors[type] || colors.info;
+      container.appendChild(el);
+      setTimeout(() => { try { el.remove(); } catch (_) {} }, duration);
+    } catch (_) {}
+  }
+
+  confirmAsync(message) {
+    return new Promise((resolve) => {
+      try {
+        const ok = window.confirm(message);
+        resolve(!!ok);
+      } catch (_) { resolve(false); }
+    });
+  }
+
   async saveLinkChanges() {
     if (!this.documentModal.currentGLItem) return;
     const perfStart = Date.now();
@@ -1502,6 +1557,8 @@ class FARComplianceApp {
   }
 
   switchSubtab(subtabName) {
+    console.log('🔄 Switching to subtab:', subtabName);
+
     // Hide all subtab contents
     document.querySelectorAll(".subtab-content").forEach((subtab) => {
       subtab.classList.remove("active");
@@ -1516,12 +1573,27 @@ class FARComplianceApp {
     const selectedSubtab = document.getElementById(`${subtabName}-subtab`);
     const selectedBtn = document.querySelector(`[data-subtab="${subtabName}"]`);
 
-    if (selectedSubtab) selectedSubtab.classList.add("active");
-    if (selectedBtn) selectedBtn.classList.add("active");
+    if (selectedSubtab) {
+      selectedSubtab.classList.add("active");
+      console.log('✅ Activated subtab:', subtabName);
+    } else {
+      console.error('❌ Subtab not found:', `${subtabName}-subtab`);
+    }
+
+    if (selectedBtn) {
+      selectedBtn.classList.add("active");
+    } else {
+      console.error('❌ Subtab button not found:', `[data-subtab="${subtabName}"]`);
+    }
 
     // Load content for specific subtabs
     if (subtabName === "doc-review") {
+      // Always refresh when switching to Document Review
+      console.log('📄 Loading Document Review content...');
       this.loadDocumentReview();
+    } else if (subtabName === "gl-review") {
+      // Refresh GL table if needed
+      console.log('📊 GL Review subtab activated');
     }
   }
 
@@ -1672,27 +1744,67 @@ class FARComplianceApp {
   async refreshDocumentTable() {
     const perfStart = Date.now();
     try {
-      if (!this.apiBaseUrl) return;
+      console.log('🔄 Refreshing document table...');
+
+      if (!this.apiBaseUrl) {
+        console.warn('⚠️ No API base URL configured');
+        return;
+      }
 
       const data = await listDocItems(this.apiBaseUrl);
+      console.log('📊 Raw API response:', {
+        documents: data.documents?.length || 0,
+        items: data.items?.length || 0,
+        links: data.links?.length || 0
+      });
 
       // Normalize document data to match frontend expectations
-      this.docs.documents = (data.documents || []).map(doc => ({
-        ...doc,
-        doctype: doc.doc_type || 'other',
-        uploadDate: doc.created_at,
-        size: doc.meta?.size || doc.size || 0,
-        mimetype: doc.mime_type || doc.mimetype
-      }));
+      this.docs.documents = (data.documents || []).map(doc => {
+        const normalized = {
+          ...doc,
+          doctype: doc.doc_type || 'other',
+          uploadDate: doc.created_at,
+          size: doc.meta?.size || doc.size || 0,
+          mimetype: doc.mime_type || doc.mimetype,
+          // Ensure we have required fields
+          id: doc.id,
+          filename: doc.filename || 'Unknown',
+          file_url: doc.file_url,
+          text_content: doc.text_content,
+          meta: doc.meta || {}
+        };
+        return normalized;
+      });
 
       this.docs.items = data.items || [];
       this.docs.links = data.links || [];
 
-      console.log('Loaded documents for Document Review:', this.docs.documents.length);
+      console.log('✅ Document data loaded:', {
+        documents: this.docs.documents.length,
+        items: this.docs.items.length,
+        links: this.docs.links.length
+      });
+
+      // Always render the table, even if empty
       this.renderDocumentTable();
       this.logPerformance('Refresh Document Table', perfStart, `${this.docs.documents.length} docs`);
+
     } catch (error) {
-      console.error('Error refreshing document table:', error);
+      console.error('❌ Error refreshing document table:', error);
+
+      // Show error state in table
+      const tableBody = document.getElementById('documents-table-body');
+      if (tableBody) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="9" style="text-align: center; color: #ef4444; padding: 20px;">
+              Error loading documents: ${error.message || error}
+              <br><small>Check console for details</small>
+            </td>
+          </tr>
+        `;
+      }
+
       this.logPerformance('Refresh Document Table (failed)', perfStart);
     }
   }
@@ -1700,62 +1812,120 @@ class FARComplianceApp {
   renderDocumentTable() {
     const tableBody = document.getElementById('documents-table-body');
     if (!tableBody) {
-      console.error('documents-table-body not found!');
+      console.error('❌ documents-table-body element not found!');
       return;
     }
 
-    console.log('Rendering document table with', this.docs.documents.length, 'documents');
-    console.log('Sample document:', this.docs.documents[0]);
+    console.log('🎨 Rendering document table with', this.docs.documents.length, 'documents');
 
     if (!this.docs.documents.length) {
-      tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #6b7280; padding: 20px;">No documents uploaded</td></tr>';
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="9" style="text-align: center; color: #6b7280; padding: 20px;">
+            📄 No documents uploaded yet
+            <br><small>Upload documents in the Documents tab to see them here</small>
+          </td>
+        </tr>
+      `;
       return;
     }
 
     const filteredDocs = this.getFilteredDocuments();
-    console.log('Filtered documents:', filteredDocs.length);
+    console.log('📋 Filtered documents for display:', filteredDocs.length);
 
-    tableBody.innerHTML = filteredDocs.map(doc => {
-      const linkedCount = this.getLinkedGLItemsCount(doc.id);
-      const ocrStatus = this.getOCRStatus(doc);
-      const confidence = this.getDocumentConfidence(doc);
-
-      return `
-        <tr data-doc-id="${doc.id}">
-          <td>
-            <div class="document-preview">
-              ${this.renderDocumentPreview(doc)}
-            </div>
-          </td>
-          <td>
-            <div class="document-name">${doc.filename}</div>
-            <div class="document-meta" style="font-size: 12px; color: #6b7280;">
-              ${doc.id.substring(0, 8)}...
-            </div>
-          </td>
-          <td>
-            <span class="doc-type-badge ${doc.doctype || 'other'}">${doc.doctype || 'other'}</span>
-          </td>
-          <td>${this.formatFileSize(doc.size || 0)}</td>
-          <td>${doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString() : 'Unknown'}</td>
-          <td>
-            <span class="ocr-status ${ocrStatus.class}">${ocrStatus.text}</span>
-          </td>
-          <td>
-            <span class="linked-count">${linkedCount} item${linkedCount !== 1 ? 's' : ''}</span>
-          </td>
-          <td>
-            <span class="confidence-score ${this.getConfidenceClass(confidence)}">${confidence}%</span>
-          </td>
-          <td>
-            <div class="document-actions">
-              <button type="button" class="btn btn--small" onclick="window.app.viewDocument('${doc.id}')">View</button>
-              <button type="button" class="btn btn--small btn--outline" onclick="window.app.reprocessDocument('${doc.id}')">Reprocess</button>
-            </div>
+    if (!filteredDocs.length) {
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="9" style="text-align: center; color: #6b7280; padding: 20px;">
+            🔍 No documents match current filters
+            <br><small>Try adjusting your search or filter criteria</small>
           </td>
         </tr>
       `;
-    }).join('');
+      return;
+    }
+
+    try {
+      tableBody.innerHTML = filteredDocs.map((doc, index) => {
+        try {
+          const linkedCount = this.getLinkedGLItemsCount(doc.id);
+          const ocrStatus = this.getOCRStatus(doc);
+          const confidence = this.getDocumentConfidence(doc);
+
+          return `
+            <tr data-doc-id="${doc.id}" data-index="${index}">
+              <td>
+                <div class="document-preview">
+                  ${this.renderDocumentPreview(doc)}
+                </div>
+              </td>
+              <td>
+                <div class="document-name" title="${doc.filename}">${this.truncateText(doc.filename, 30)}</div>
+                <div class="document-meta" style="font-size: 12px; color: #6b7280;" title="${doc.id}">
+                  ID: ${doc.id.substring(0, 8)}...
+                </div>
+              </td>
+              <td>
+                <span class="doc-type-badge ${doc.doctype || 'other'}" title="Document type">
+                  ${doc.doctype || 'other'}
+                </span>
+              </td>
+              <td>${this.formatFileSize(doc.size || 0)}</td>
+              <td title="${doc.uploadDate}">
+                ${doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString() : 'Unknown'}
+              </td>
+              <td>
+                <span class="ocr-status ${ocrStatus.class}" title="${ocrStatus.description || ocrStatus.text}">
+                  ${ocrStatus.text}
+                </span>
+              </td>
+              <td>
+                <span class="linked-count" title="Number of linked GL items">
+                  ${linkedCount} item${linkedCount !== 1 ? 's' : ''}
+                </span>
+              </td>
+              <td>
+                <span class="confidence-score ${this.getConfidenceClass(confidence)}" title="OCR confidence score">
+                  ${confidence}%
+                </span>
+              </td>
+              <td>
+                <div class="document-actions">
+                  <button type="button" class="btn btn--small" onclick="window.app.viewDocument('${doc.id}')" title="View document">
+                    View
+                  </button>
+                  <button type="button" class="btn btn--small btn--outline" onclick="window.app.reprocessDocument('${doc.id}')" title="Reprocess with OCR">
+                    Reprocess
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        } catch (rowError) {
+          console.error('❌ Error rendering document row:', doc.id, rowError);
+          return `
+            <tr>
+              <td colspan="9" style="text-align: center; color: #ef4444; padding: 10px;">
+                Error displaying document: ${doc.filename || doc.id}
+              </td>
+            </tr>
+          `;
+        }
+      }).join('');
+
+      console.log('✅ Document table rendered successfully');
+
+    } catch (renderError) {
+      console.error('❌ Error rendering document table:', renderError);
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="9" style="text-align: center; color: #ef4444; padding: 20px;">
+            Error rendering documents table
+            <br><small>Check console for details</small>
+          </td>
+        </tr>
+      `;
+    }
   }
 
   renderDocumentPreview(doc) {
@@ -1796,12 +1966,32 @@ class FARComplianceApp {
   }
 
   getOCRStatus(doc) {
-    if (doc.text_content && doc.text_content.length > 10) {
-      return { class: 'processed', text: 'Processed' };
-    } else if (doc.text_content && doc.text_content.includes('processing')) {
-      return { class: 'processing', text: 'Processing' };
+    const textLength = (doc.text_content || '').length;
+
+    if (textLength > 100) {
+      return {
+        class: 'processed',
+        text: 'Processed',
+        description: `OCR completed (${textLength} chars extracted)`
+      };
+    } else if (textLength > 10) {
+      return {
+        class: 'processing',
+        text: 'Partial',
+        description: `Limited text extracted (${textLength} chars)`
+      };
+    } else if (doc.meta?.processing_method) {
+      return {
+        class: 'processing',
+        text: 'Processing',
+        description: `Method: ${doc.meta.processing_method}`
+      };
     } else {
-      return { class: 'pending', text: 'Pending' };
+      return {
+        class: 'pending',
+        text: 'Pending',
+        description: 'No OCR processing completed'
+      };
     }
   }
 
@@ -1970,12 +2160,38 @@ class FARComplianceApp {
       await this.refreshDocumentTable();
       await this.updateDocumentMetrics();
       console.log('Documents refreshed successfully');
+      alert('Documents refreshed successfully!');
       this.logPerformance('Refresh Documents', perfStart);
     } catch (error) {
       console.error('Error refreshing documents:', error);
       alert('Failed to refresh documents: ' + (error.message || error));
       this.logPerformance('Refresh Documents (failed)', perfStart);
     }
+  }
+
+  debugDocuments() {
+    console.log('🐛 DEBUG: Document Review State');
+    console.log('API Base URL:', this.apiBaseUrl);
+    console.log('Documents:', this.docs.documents);
+    console.log('Document Items:', this.docs.items);
+    console.log('Links:', this.docs.links);
+    console.log('Current Tab Active:', document.querySelector('#review-tab.active') ? 'YES' : 'NO');
+    console.log('Current Subtab Active:', document.querySelector('#doc-review-subtab.active') ? 'YES' : 'NO');
+    console.log('Table Body Element:', document.getElementById('documents-table-body'));
+
+    const debugInfo = {
+      apiBaseUrl: this.apiBaseUrl,
+      documentsCount: this.docs.documents.length,
+      itemsCount: this.docs.items.length,
+      linksCount: this.docs.links.length,
+      reviewTabActive: !!document.querySelector('#review-tab.active'),
+      docReviewSubtabActive: !!document.querySelector('#doc-review-subtab.active'),
+      tableBodyExists: !!document.getElementById('documents-table-body'),
+      sampleDocument: this.docs.documents[0] || null
+    };
+
+    alert('Debug info logged to console. Check browser console for details.');
+    console.table(debugInfo);
   }
 
   async viewDocument(docId) {
@@ -1996,8 +2212,9 @@ class FARComplianceApp {
       return;
     }
 
-    if (!confirm(`Reprocess "${doc.filename}" with OCR?`)) {
-      return;
+    {
+      const ok = this.confirmAsync ? (await this.confirmAsync(`Reprocess "${doc.filename}" with OCR?`)) : confirm(`Reprocess "${doc.filename}" with OCR?`);
+      if (!ok) return;
     }
 
     const perfStart = Date.now();
@@ -2016,16 +2233,60 @@ class FARComplianceApp {
       if (response.ok) {
         await this.refreshDocumentTable();
         await this.updateDocumentMetrics();
-        alert(`Successfully reprocessed "${doc.filename}"`);
+        if (this.showToast) this.showToast(`Successfully reprocessed "${doc.filename}"`, 'success');
         this.logPerformance('Reprocess Document', perfStart, doc.filename);
       } else {
-        throw new Error(`Failed to reprocess document: ${response.status}`);
+        const text = await response.text().catch(() => '');
+        let detail = `Failed to reprocess document: ${response.status}`;
+        try { const j = JSON.parse(text); detail = j?.error || j?.details || detail; } catch(_) { if (text) detail = text; }
+        throw new Error(detail);
       }
     } catch (error) {
       console.error('Reprocess error:', error);
-      alert('Failed to reprocess document: ' + (error.message || error));
+      if (this.showToast) this.showToast('Failed to reprocess document: ' + (error.message || error), 'error');
       this.logPerformance('Reprocess Document (failed)', perfStart, doc.filename);
     }
+  }
+
+  // Utility functions
+  truncateText(text, maxLength) {
+    if (!text) return '';
+    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+  }
+
+  formatFileSize(bytes) {
+    if (!bytes) return '0 B';
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  }
+
+  isImageFile(filename) {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff'].includes(ext);
+  }
+
+  isPdfFile(filename) {
+    if (!filename) return false;
+    return filename.toLowerCase().endsWith('.pdf');
+  }
+
+  getDocumentUrl(doc) {
+    if (!doc.file_url) return null;
+    return `${this.apiBaseUrl}${doc.file_url}`;
+  }
+
+  debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
   }
   // Performance logging helper
   logPerformance(operation, startTime, data) {

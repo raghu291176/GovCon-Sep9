@@ -1,6 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { processDocumentWorkflow, batchProcessDocuments } from '../services/documentWorkflow.js';
+import { getAnalyzerInfo } from '../services/contentUnderstandingService.js';
 const router = express.Router();
 
 const upload = multer({ 
@@ -74,7 +75,11 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
             maxResults: parseInt(req.body.maxResults) || 10
         };
         
-        const result = await processDocumentWorkflow(req.file.buffer, glEntries, options);
+        const result = await processDocumentWorkflow(
+            req.file.buffer,
+            glEntries,
+            { ...options, fileType: req.file.mimetype, filename: req.file.originalname }
+        );
         
         res.json({
             success: true,
@@ -149,17 +154,62 @@ router.post('/process-batch', upload.array('documents', 10), async (req, res) =>
 
 router.get('/health', async (req, res) => {
     try {
+        // Helper to parse api-version from a URL
+        const parseApiVersion = (url) => {
+            try {
+                const u = new URL(url);
+                return u.searchParams.get('api-version') || null;
+            } catch {
+                return null;
+            }
+        };
+
         const healthCheck = {
             status: 'healthy',
             timestamp: new Date().toISOString(),
             services: {
                 tesseract: 'available',
-                azure_form_recognizer: process.env.AZURE_FORM_RECOGNIZER_ENDPOINT ? 'configured' : 'not_configured',
-                mistral_ocr: process.env.MISTRAL_OCR_ENDPOINT ? 'configured' : 'not_configured'
+                content_understanding: {
+                    endpoint: process.env.CONTENT_UNDERSTANDING_ENDPOINT ? 'configured' : 'not_configured',
+                    key: process.env.CONTENT_UNDERSTANDING_KEY ? 'configured' : 'not_configured',
+                    receipt_analyzer: process.env.CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID ? 'configured' : 'not_configured',
+                    invoice_analyzer: process.env.CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID ? 'configured' : 'not_configured',
+                    api_version: process.env.CONTENT_UNDERSTANDING_API_VERSION || 'unset',
+                    processing_location: process.env.CONTENT_UNDERSTANDING_PROCESSING_LOCATION ? 'set' : 'unset',
+                    analyzers: {}
+                },
+                azure_openai: {
+                    endpoint: process.env.AZURE_OPENAI_ENDPOINT ? 'configured' : 'not_configured',
+                    key: process.env.OPENAI_API_KEY ? 'configured' : 'not_configured',
+                    deployment: process.env.AZURE_OPENAI_DEPLOYMENT ? 'configured' : 'not_configured',
+                    api_version: process.env.AZURE_OPENAI_API_VERSION || 'unset'
+                },
+                mistral_ocr: {
+                    endpoint: process.env.AZURE_FOUNDRY_MISTRAL_ENDPOINT ? 'configured' : 'not_configured',
+                    key: process.env.AZURE_FOUNDRY_MISTRAL_KEY ? 'configured' : 'not_configured',
+                    model: process.env.AZURE_FOUNDRY_MISTRAL_MODEL ? 'configured' : 'not_configured',
+                    api_version: parseApiVersion(process.env.AZURE_FOUNDRY_MISTRAL_ENDPOINT || '') || 'unset'
+                }
             },
             version: '1.0.0'
         };
-        
+
+        // Ping analyzers if configured (best-effort)
+        try {
+            const receiptId = process.env.CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID;
+            const invoiceId = process.env.CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID;
+            if (receiptId) {
+                const info = await getAnalyzerInfo(receiptId);
+                healthCheck.services.content_understanding.analyzers.receipt = info.ok ? 'reachable' : `unreachable:${info.status || 'unknown'}`;
+            }
+            if (invoiceId) {
+                const info = await getAnalyzerInfo(invoiceId);
+                healthCheck.services.content_understanding.analyzers.invoice = info.ok ? 'reachable' : `unreachable:${info.status || 'unknown'}`;
+            }
+        } catch (e) {
+            // Do not fail health if ping fails
+        }
+
         res.json(healthCheck);
     } catch (error) {
         res.status(500).json({
@@ -184,19 +234,19 @@ router.get('/supported-formats', (req, res) => {
                     always_available: true
                 },
                 {
-                    name: 'azure_receipt',
-                    description: 'Specialized receipt processing with Azure Form Recognizer',
-                    requires_configuration: 'AZURE_FORM_RECOGNIZER_ENDPOINT'
+                    name: 'content_understanding_receipt',
+                    description: 'Specialized receipt processing with Azure Content Understanding',
+                    requires_configuration: 'CONTENT_UNDERSTANDING_ENDPOINT'
                 },
                 {
-                    name: 'azure_invoice',
-                    description: 'Specialized invoice processing with Azure Form Recognizer',
-                    requires_configuration: 'AZURE_FORM_RECOGNIZER_ENDPOINT'
+                    name: 'content_understanding_invoice',
+                    description: 'Specialized invoice processing with Azure Content Understanding',
+                    requires_configuration: 'CONTENT_UNDERSTANDING_ENDPOINT'
                 },
                 {
                     name: 'mistral_ocr',
                     description: 'Advanced OCR processing with Mistral',
-                    requires_configuration: 'MISTRAL_OCR_ENDPOINT'
+                    requires_configuration: 'AZURE_FOUNDRY_MISTRAL_ENDPOINT'
                 }
             ]
         }

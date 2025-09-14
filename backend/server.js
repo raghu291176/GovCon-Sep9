@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 // import pdfParse from 'pdf-parse'; // Temporarily disabled due to module issues
 import mammoth from 'mammoth';
 import { classifyByText, extractApprovalsFromText } from './services/approvals.js';
-import { logger, LogLevel, LogCategory, getLogs, getLogAnalytics, clearOldLogs, getSystemHealth } from './services/logService.js';
+import { logger, LogLevel, LogCategory, getLogs, getLogAnalytics, clearOldLogs, getSystemHealth, subscribeLogs } from './services/logService.js';
 import { scoreMatch, hasUnallowableKeyword } from './services/match.js';
 import { setupSQLite } from './persistence/sqlite.js';
 import { loadAllConfigs as loadFileConfigs, saveConfig as saveFileConfig } from './persistence/fileStore.js';
@@ -918,83 +918,204 @@ async function parseApprovalsWithLLM(rawText) {
 
 app.post('/api/docs/ingest', upload.array('files', 10), async (req, res) => {
   try {
-    // Enforce GL-first: require at least one GL entry before accepting documents
+    console.log('📤 Document upload started:', req.files?.length || 0, 'files');
+
+    // Check GL entries requirement
     if (!Array.isArray(memory.glEntries) || memory.glEntries.length === 0) {
-      return res.status(400).json({ error: 'Please import GL entries before adding receipts/invoices.' });
+      return res.status(400).json({
+        success: false,
+        error: 'Please import GL entries before adding receipts/invoices.'
+      });
     }
+
     const files = req.files || [];
-    if (!files.length) return res.status(400).json({ error: 'No files uploaded' });
+    if (!files.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'No files uploaded'
+      });
+    }
+
     const results = [];
+    const duplicateAction = String(req.query.duplicateAction || '').toLowerCase();
+    console.log('🔄 Processing', files.length, 'uploaded files...');
+
     for (const f of files) {
-      let text = '';
-      try { text = await extractTextFromBuffer(f.buffer, f.mimetype, f.originalname); } catch (_) {}
-      const docId = crypto.randomUUID();
-      // Persist original file for preview under /uploads/<docId>/<filename>
-      let fileUrl = null;
       try {
-        const safeName = path.basename(f.originalname || `doc-${docId}`);
-        const dir = path.join(UPLOAD_DIR, docId);
-        fs.mkdirSync(dir, { recursive: true });
-        const dest = path.join(dir, safeName);
-        fs.writeFileSync(dest, f.buffer);
-        fileUrl = `/uploads/${encodeURIComponent(docId)}/${encodeURIComponent(safeName)}`;
-      } catch (_) {}
-      const docRecord = {
-        id: docId,
-        filename: f.originalname,
-        mime_type: f.mimetype,
-        text_content: text || null,
-        meta: { size: f.size },
-        created_at: new Date(),
-        doc_type: 'unknown',
-        approvals: [],
-        file_url: fileUrl,
-      };
-      memory.documents.push(docRecord);
-      let items = [];
-      let codexResult = null;
-      
-      // Try enhanced Codex processing first (if image/pdf)
-      const isImage = f.mimetype && f.mimetype.startsWith('image/');
-      const isPDF = f.mimetype && f.mimetype.includes('pdf');
-      
-      if (isImage || isPDF) {
-        try {
-          // Convert GL entries to Codex format
-          const codexGLEntries = memory.glEntries.map(entry => ({
-            id: entry.id,
-            amount: entry.amount,
-            date: entry.date,
-            vendor: entry.vendor,
-            description: entry.description,
-            account: entry.account_number
-          }));
-          
-          codexResult = await processDocumentWorkflow(f.buffer, codexGLEntries);
-          
-          if (codexResult.processing_status === 'success' && codexResult.extracted_data) {
-            // Convert Codex result to existing format
-            items = [{
-              kind: 'receipt', // Default, will be refined later
-              vendor: codexResult.extracted_data.merchant,
-              date: codexResult.extracted_data.date,
-              amount: codexResult.extracted_data.amount,
-              currency: 'USD',
-              details: { 
-                codex_confidence: codexResult.extracted_data.confidence_scores,
-                processing_method: codexResult.processing_method 
-              }
-            }];
-            
-            // Update GL entries with high-confidence matches
-            if (codexResult.gl_matches && codexResult.gl_matches.length > 0) {
-              updateGLWithDocumentData(codexResult.gl_matches, docId, codexResult.extracted_data);
-            }
-          }
-        } catch (codexError) {
-          console.warn('Codex processing failed, falling back to existing methods:', codexError.message);
+        console.log('📄 Processing file:', f.originalname);
+
+        // Compute hash for de-duplication
+        let fileHash = '';
+        try { fileHash = crypto.createHash('sha256').update(f.buffer).digest('hex'); } catch (_) {}
+
+        // Find existing by filename
+        const existingByName = (memory.documents || []).filter(d => (d.filename || '').toLowerCase() === (f.originalname || '').toLowerCase());
+        const exactMatch = existingByName.find(d => (d.meta?.file_hash && fileHash && d.meta.file_hash === fileHash));
+
+        if (exactMatch) {
+          // Exact duplicate: skip
+          results.push({
+            success: false,
+            filename: f.originalname,
+            code: 'DUPLICATE_EXACT',
+            message: 'File already uploaded (exact match). Skipped.',
+            existing_document_id: String(exactMatch.id)
+          });
+          continue;
         }
-      }
+
+        if (existingByName.length && duplicateAction !== 'replace') {
+          // Same name, different content: require confirmation
+          results.push({
+            success: false,
+            filename: f.originalname,
+            code: 'DUPLICATE_NAME',
+            message: 'A document with the same name exists. Choose replace or cancel.',
+            existing_document_id: String(existingByName[0].id)
+          });
+          continue;
+        }
+
+        // Generate unique document ID
+        let docId = crypto.randomUUID();
+        let replacingDocument = null;
+        if (existingByName.length && duplicateAction === 'replace') {
+          // Replace the first match by name
+          replacingDocument = existingByName[0];
+          docId = String(replacingDocument.id);
+          console.log('♻️ Replacing existing document', docId, 'with new upload for', f.originalname);
+          // Clear old doc items/links/approvals in memory
+          try {
+            const itemIds = new Set(memory.docItems.filter(i => String(i.document_id) === docId).map(i => String(i.id)));
+            memory.glDocLinks = memory.glDocLinks.filter(l => !itemIds.has(String(l.document_item_id)));
+            memory.docItems = memory.docItems.filter(i => String(i.document_id) !== docId);
+            // Also clear approvals on the in-memory record
+            const target = memory.documents.find(d => String(d.id) === docId);
+            if (target) target.approvals = [];
+          } catch (_) {}
+          // Clear persisted items/links/approvals if sqlite is available
+          try { if (sqlite) sqlite.clearDocumentRelatedData(docId); } catch (_) {}
+        }
+
+        // Extract text content
+        let text = '';
+        try {
+          text = await extractTextFromBuffer(f.buffer, f.mimetype, f.originalname);
+          console.log('📝 Extracted text length:', text.length, 'chars');
+        } catch (textError) {
+          console.warn('⚠️ Text extraction failed for', f.originalname, ':', textError.message);
+        }
+
+        // Save file to disk for preview
+        let fileUrl = null;
+        try {
+          const safeName = path.basename(f.originalname || `doc-${docId}`);
+          const dir = path.join(UPLOAD_DIR, docId);
+          fs.mkdirSync(dir, { recursive: true });
+          const dest = path.join(dir, safeName);
+          fs.writeFileSync(dest, f.buffer);
+          fileUrl = `/uploads/${encodeURIComponent(docId)}/${encodeURIComponent(safeName)}`;
+          console.log('💾 File saved to:', fileUrl);
+        } catch (fileError) {
+          console.warn('⚠️ File save failed:', fileError.message);
+        }
+
+        // Create document record
+        const docRecord = replacingDocument ? replacingDocument : {
+          id: docId,
+          filename: f.originalname,
+          mime_type: f.mimetype,
+          text_content: text || null,
+          meta: {},
+          created_at: new Date(),
+          doc_type: 'unknown',
+          approvals: [],
+          file_url: fileUrl,
+        };
+        // Update metadata for both new and replaced
+        docRecord.mime_type = f.mimetype;
+        docRecord.file_url = fileUrl || docRecord.file_url;
+        docRecord.meta = {
+          ...(docRecord.meta || {}),
+          size: f.size,
+          uploadDate: new Date().toISOString(),
+          file_hash: fileHash
+        };
+
+        // Add/update in memory
+        if (replacingDocument) {
+          const idx = memory.documents.findIndex(d => String(d.id) === docId);
+          if (idx >= 0) memory.documents[idx] = docRecord; else memory.documents.push(docRecord);
+          console.log('📊 Updated existing document in memory:', docId);
+        } else {
+          memory.documents.push(docRecord);
+          console.log('📊 Added document to memory. Total documents:', memory.documents.length);
+        }
+
+        let items = [];
+        let codexResult = null;
+        // Try enhanced OCR processing (for images/PDFs)
+        const isImage = f.mimetype && f.mimetype.startsWith('image/');
+        const isPDF = f.mimetype && f.mimetype.includes('pdf');
+
+        if (isImage || isPDF) {
+          try {
+            console.log('🔍 Running OCR processing for:', f.originalname);
+
+            // Convert GL entries to processing format
+            const glEntries = memory.glEntries.map(entry => ({
+              id: entry.id,
+              amount: entry.amount,
+              date: entry.date,
+              vendor: entry.vendor,
+              description: entry.description,
+              account: entry.account_number
+            }));
+
+            // Run document workflow (includes Tesseract OCR)
+            codexResult = await processDocumentWorkflow(f.buffer, glEntries, {
+              fileType: f.mimetype,
+              filename: f.originalname
+            });
+            console.log('🎯 OCR processing result:', codexResult.processing_status);
+
+            if (codexResult.processing_status === 'success' && codexResult.extracted_data) {
+              // Update document with OCR results
+              docRecord.text_content = `OCR extracted data: ${JSON.stringify(codexResult.extracted_data)}`;
+              docRecord.meta.processing_method = codexResult.processing_method;
+              docRecord.meta.confidence = codexResult.extracted_data.confidence_scores?.overall || 0;
+
+              // Create document items from OCR results
+              items = [{
+                kind: 'receipt',
+                vendor: codexResult.extracted_data.merchant || 'Unknown',
+                date: codexResult.extracted_data.date,
+                amount: codexResult.extracted_data.amount || 0,
+                currency: 'USD',
+                details: {
+                  confidence: codexResult.extracted_data.confidence_scores,
+                  processing_method: codexResult.processing_method
+                }
+              }];
+
+              console.log('✅ OCR extraction successful:', {
+                vendor: codexResult.extracted_data.merchant,
+                amount: codexResult.extracted_data.amount,
+                confidence: codexResult.extracted_data.confidence_scores?.overall
+              });
+
+              // Update GL entries with matches
+              if (codexResult.gl_matches && codexResult.gl_matches.length > 0) {
+                updateGLWithDocumentData(codexResult.gl_matches, docId, codexResult.extracted_data);
+                console.log('🔗 Updated GL entries with', codexResult.gl_matches.length, 'matches');
+              }
+            } else {
+              console.warn('⚠️ OCR processing failed for:', f.originalname);
+            }
+          } catch (ocrError) {
+            console.error('❌ OCR processing error:', ocrError.message);
+          }
+        }
       
       // Fallback to existing Azure DI if Codex didn't produce results
       if (!items.length) {
@@ -1224,27 +1345,74 @@ app.post('/api/docs/ingest', upload.array('files', 10), async (req, res) => {
       } catch (error) {
         console.error('❌ SQLite save failed:', error.message || error);
       }
-      results.push({ 
-        document_id: String(docId), 
-        filename: f.originalname, 
-        doc_type: docRecord.doc_type, 
-        approvals: docRecord.approvals, 
-        items: itemRows.map(i => ({ id: i.id, vendor: i.vendor, date: i.date, amount: i.amount, kind: i.kind })), 
-        links,
-        codex_processing: codexResult ? {
-          processing_method: codexResult.processing_method,
-          processing_time_ms: codexResult.processing_time_ms,
-          confidence_scores: codexResult.extracted_data?.confidence_scores,
-          matches_found: codexResult.gl_matches?.length || 0,
-          primary_match_score: codexResult.gl_matches?.[0]?.match_score || null
-        } : null
-      });
+        // Add result for this file
+        results.push({
+          success: true,
+          document_id: String(docId),
+          filename: f.originalname,
+          doc_type: docRecord.doc_type,
+          file_url: fileUrl,
+          text_length: (text || '').length,
+          processing_method: codexResult?.processing_method || 'text_only',
+          confidence: codexResult?.extracted_data?.confidence_scores?.overall || null,
+          items_created: itemRows.length,
+          links_created: links.length,
+          replaced: !!replacingDocument,
+          ocr_data: codexResult ? {
+            vendor: codexResult.extracted_data?.merchant,
+            amount: codexResult.extracted_data?.amount,
+            date: codexResult.extracted_data?.date,
+            confidence: codexResult.extracted_data?.confidence_scores
+          } : null
+        });
+
+        console.log('✅ Document processed successfully:', f.originalname, 'ID:', docId);
+
+      } catch (fileError) {
+        console.error('❌ Error processing file:', f.originalname, fileError.message);
+        results.push({
+          success: false,
+          filename: f.originalname,
+          error: fileError.message
+        });
+      }
     }
+
     // Refresh attachment counts on GL entries
     recomputeAttachmentFlags();
-  res.json({ ok: true, results });
-  } catch (e) {
-    res.status(500).json({ error: e.message || 'Failed to ingest' });
+    console.log('🔄 Recomputed attachment flags');
+
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+
+    console.log('📊 Upload summary:', {
+      total: files.length,
+      successful,
+      failed,
+      total_documents_in_memory: memory.documents.length
+    });
+    // Return comprehensive response
+    res.json({
+      success: true,
+      message: `Processed ${successful} of ${files.length} files successfully`,
+      summary: {
+        total_files: files.length,
+        successful_uploads: successful,
+        failed_uploads: failed,
+        total_documents: memory.documents.length,
+        total_doc_items: memory.docItems.length,
+        total_links: memory.glDocLinks.length
+      },
+      results: results
+    });
+
+  } catch (error) {
+    console.error('❌ Document upload failed:', error.message || error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to process documents',
+      code: 'UPLOAD_ERROR'
+    });
   }
 });
 
@@ -1279,6 +1447,33 @@ app.get('/api/logs/analytics', (req, res) => {
     res.json(analytics);
   } catch (error) {
     logger.error(LogCategory.API_REQUEST, 'Failed to get log analytics', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Live log stream via Server-Sent Events
+app.get('/api/logs/stream', (req, res) => {
+  try {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    // Initial comment and recent logs burst
+    res.write(': connected\n\n');
+    try {
+      const recent = getLogs({ limit: 50 }).logs.reverse();
+      for (const log of recent) res.write(`data: ${JSON.stringify(log)}\n\n`);
+    } catch (_) {}
+
+    const unsubscribe = subscribeLogs((entry) => {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    });
+
+    const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+    req.on('close', () => { clearInterval(ping); unsubscribe(); try { res.end(); } catch (_) {} });
+  } catch (error) {
+    logger.error(LogCategory.API_REQUEST, 'Failed to establish log stream', { error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
@@ -1439,7 +1634,10 @@ app.post('/api/docs/reprocess', express.json(), async (req, res) => {
       console.log(`🔄 Reprocessing document: ${doc.filename} with Tesseract OCR`);
 
       // Run the document workflow which includes Tesseract OCR
-      const result = await processDocumentWorkflow(fileBuffer, codexGLEntries);
+      const result = await processDocumentWorkflow(fileBuffer, codexGLEntries, {
+        fileType: doc.mime_type || (doc.filename?.toLowerCase().endsWith('.pdf') ? 'application/pdf' : undefined),
+        filename: doc.filename
+      });
 
       if (result.processing_status === 'success') {
         // Update the document with OCR results

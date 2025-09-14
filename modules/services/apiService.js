@@ -93,10 +93,15 @@ export async function testLLM(apiBaseUrl) {
 }
 
 // Documents API
-export async function ingestDocuments(apiBaseUrl, files) {
+export async function ingestDocuments(apiBaseUrl, files, options = {}) {
   const form = new FormData();
   (files || []).forEach((f) => form.append('files', f));
-  const res = await fetch(buildUrl(apiBaseUrl, `/api/docs/ingest`), {
+  let path = `/api/docs/ingest`;
+  if (options.duplicateAction) {
+    const q = new URLSearchParams({ duplicateAction: String(options.duplicateAction) });
+    path += `?${q.toString()}`;
+  }
+  const res = await fetch(buildUrl(apiBaseUrl, path), {
     method: 'POST',
     body: form,
   });

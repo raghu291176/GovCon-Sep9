@@ -11,6 +11,23 @@ const memory = {
   maxLogs: 10000 // Limit to prevent memory issues
 };
 
+// Live subscribers for runtime streaming (SSE)
+const subscribers = new Set();
+
+export function subscribeLogs(handler) {
+  if (typeof handler === 'function') {
+    subscribers.add(handler);
+    return () => subscribers.delete(handler);
+  }
+  return () => {};
+}
+
+function broadcast(logEntry) {
+  for (const fn of subscribers) {
+    try { fn(logEntry); } catch (_) {}
+  }
+}
+
 // Log levels
 export const LogLevel = {
   ERROR: 'ERROR',
@@ -56,6 +73,9 @@ export function createLog(level, category, message, metadata = {}) {
   if (memory.logs.length > memory.maxLogs) {
     memory.logs = memory.logs.slice(-memory.maxLogs);
   }
+
+  // Notify live subscribers
+  broadcast(logEntry);
 
   // Also log to console for immediate visibility
   const consoleMessage = `[${level}] ${category}: ${message}`;
@@ -268,6 +288,39 @@ export function getSystemHealth() {
   const errors = recentLogs.filter(log => log.level === LogLevel.ERROR);
   const warnings = recentLogs.filter(log => log.level === LogLevel.WARN);
 
+  // Helper to parse api-version from an endpoint URL
+  const parseApiVersion = (url) => {
+    try {
+      const u = new URL(url);
+      return u.searchParams.get('api-version') || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const services = {
+    content_understanding: {
+      endpoint: process.env.CONTENT_UNDERSTANDING_ENDPOINT ? 'configured' : 'not_configured',
+      key: process.env.CONTENT_UNDERSTANDING_KEY ? 'configured' : 'not_configured',
+      receipt_analyzer: process.env.CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID ? 'configured' : 'not_configured',
+      invoice_analyzer: process.env.CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID ? 'configured' : 'not_configured',
+      api_version: process.env.CONTENT_UNDERSTANDING_API_VERSION || 'unset',
+      processing_location: process.env.CONTENT_UNDERSTANDING_PROCESSING_LOCATION ? 'set' : 'unset'
+    },
+    azure_openai: {
+      endpoint: process.env.AZURE_OPENAI_ENDPOINT ? 'configured' : 'not_configured',
+      key: process.env.OPENAI_API_KEY ? 'configured' : 'not_configured',
+      deployment: process.env.AZURE_OPENAI_DEPLOYMENT ? 'configured' : 'not_configured',
+      api_version: process.env.AZURE_OPENAI_API_VERSION || 'unset'
+    },
+    azure_foundry_mistral: {
+      endpoint: process.env.AZURE_FOUNDRY_MISTRAL_ENDPOINT ? 'configured' : 'not_configured',
+      key: process.env.AZURE_FOUNDRY_MISTRAL_KEY ? 'configured' : 'not_configured',
+      model: process.env.AZURE_FOUNDRY_MISTRAL_MODEL ? 'configured' : 'not_configured',
+      api_version: parseApiVersion(process.env.AZURE_FOUNDRY_MISTRAL_ENDPOINT || '') || 'unset'
+    }
+  };
+
   return {
     status: errors.length > 10 ? 'CRITICAL' : warnings.length > 50 ? 'WARNING' : 'HEALTHY',
     totalLogs: memory.logs.length,
@@ -276,7 +329,8 @@ export function getSystemHealth() {
     recentWarnings: warnings.length,
     memoryUsage: process.memoryUsage(),
     uptime: process.uptime(),
-    lastError: errors.length > 0 ? errors[0] : null
+    lastError: errors.length > 0 ? errors[0] : null,
+    services
   };
 }
 

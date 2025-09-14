@@ -141,6 +141,9 @@ export function setupSQLite(memory) {
     VALUES (@document_item_id, @gl_entry_id, @score, @doc_summary, @doc_flag_unallowable)`);
 
   const deleteLink = db.prepare(`DELETE FROM gl_doc_links WHERE document_item_id = ? AND gl_entry_id = ?`);
+  const deleteLinksForDoc = db.prepare(`DELETE FROM gl_doc_links WHERE document_item_id IN (SELECT id FROM doc_items WHERE document_id = ?)`);
+  const deleteDocItemsForDoc = db.prepare(`DELETE FROM doc_items WHERE document_id = ?`);
+  const deleteApprovalsForDoc = db.prepare(`DELETE FROM document_approvals WHERE document_id = ?`);
 
   const saveConfigStmt = db.prepare(`INSERT OR REPLACE INTO kv_config (key, value_json) VALUES (?, ?)`);
   const readConfigStmt = db.prepare(`SELECT value_json FROM kv_config WHERE key = ?`);
@@ -261,6 +264,18 @@ export function setupSQLite(memory) {
     try { saveConfigStmt.run(String(key), JSON.stringify(obj || {})); } catch (e) {}
   }
 
+  function clearDocumentRelatedData(documentId) {
+    try {
+      deleteLinksForDoc.run(String(documentId));
+    } catch (_) {}
+    try {
+      deleteDocItemsForDoc.run(String(documentId));
+    } catch (_) {}
+    try {
+      deleteApprovalsForDoc.run(String(documentId));
+    } catch (_) {}
+  }
+
   // Initial load into memory
   loadAll();
 
@@ -273,5 +288,6 @@ export function setupSQLite(memory) {
     saveLinks,
     removeLink,
     saveConfig,
+    clearDocumentRelatedData,
   };
 }
