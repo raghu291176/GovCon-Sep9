@@ -459,7 +459,10 @@ async function callOpenAICompatible(rows) {
     role: 'system',
     content: [
       'You are a compliance assistant for FAR cost allowability. You will receive a JSON object with an array "rows". Each row may include:',
-      'index (0-based), id (unique string), accountNumber, description, amount, date (YYYY-MM-DD), category, vendor, contractNumber, attachmentsCount (integer), hasReceipt (boolean).',
+      'index (0-based), id (unique string), accountNumber, description, amount, date (YYYY-MM-DD), category, vendor, contractNumber, attachmentsCount (integer), hasReceipt (boolean), and attachments (array).',
+      '',
+      'attachments array contains items with fields: { documentItemId, documentId, filename, mimeType, ocr: { amount, date, vendor, confidence }, processingMethod }.',
+      'Use attached OCR fields (amount/date/vendor) to corroborate allowability and receipt presence/adequacy. Prefer exact OCR fields over description hints when present.',
       '',
       'Return exactly one top-level JSON object and nothing else (no prose, no markdown, no code fences). Schema:',
       '{"results":[{"index":0,"id":"<same as input id>","classification":"ALLOWED|UNALLOWABLE|NEEDS_REVIEW|RECEIPT_REQUIRED","rationale":"…","farSection":"31.xxx or \"\""}]}',
@@ -488,6 +491,34 @@ async function callOpenAICompatible(rows) {
       '- Direct travel to client/government site with null contractNumber and allocability unclear → NEEDS_REVIEW.',
     ].join('\n')
   };
+  // Helper: collect attachments for a given GL row id
+  function buildAttachmentsFor(glId, maxItems = 5) {
+    const out = [];
+    try {
+      const links = (memory.glDocLinks || []).filter(l => String(l.gl_entry_id) === String(glId));
+      for (const l of links) {
+        const item = (memory.docItems || []).find(i => String(i.id) === String(l.document_item_id));
+        if (!item) continue;
+        const doc = (memory.documents || []).find(d => String(d.id) === String(item.document_id));
+        out.push({
+          documentItemId: String(item.id),
+          documentId: doc ? String(doc.id) : null,
+          filename: doc ? doc.filename : null,
+          mimeType: doc ? doc.mime_type : null,
+          processingMethod: item?.details?.processing_method || doc?.meta?.processing_method || null,
+          ocr: {
+            amount: typeof item.amount === 'number' ? item.amount : null,
+            date: item.date || null,
+            vendor: item.vendor || null,
+            confidence: item?.details?.confidence || doc?.meta?.confidence || null
+          }
+        });
+        if (out.length >= maxItems) break;
+      }
+    } catch (_) {}
+    return out;
+  }
+
   // Helper to normalize row for the payload
   const normRow = (r, i) => {
     const obj = {
@@ -503,6 +534,12 @@ async function callOpenAICompatible(rows) {
     if (r.id) obj.id = r.id;
     if (typeof r.attachmentsCount === 'number') obj.attachmentsCount = r.attachmentsCount;
     if (typeof r.hasReceipt === 'boolean') obj.hasReceipt = r.hasReceipt;
+    // Attach OCR-backed attachments for this row (by id)
+    const glId = String(r.id || r.gl_entry_id || r.glId || r.gl_id || '');
+    if (glId) {
+      const atts = buildAttachmentsFor(glId, 5);
+      if (atts.length) obj.attachments = atts;
+    }
     return obj;
   };
   const examples = rows.map(normRow);
@@ -623,12 +660,27 @@ app.post('/api/llm-review', async (req, res) => {
       console.warn('Attachment gate check failed:', gateErr?.message || gateErr);
       return res.status(400).json({ error: 'AI review requires at least one image or PDF attachment.' });
     }
-    console.log('Calling Azure OpenAI with', rows.length, 'rows...');
-    const out = await callOpenAICompatible(rows);
-    const results = Array.isArray(out?.results) ? out.results : [];
-    console.log('AI Review - Results:', results.length, 'results', out?.error ? `(warning: ${out.error})` : '');
+    // Prepare rows with stable indices
+    const rowsWithIndex = rows.map((r, i) => ({ ...r, index: (typeof r.index === 'number') ? r.index : i }));
+
+    // Process in batches of at most 15 rows each
+    const BATCH_SIZE = 15;
+    const combinedResults = [];
+    const batchWarnings = [];
+    const batchLogs = [];
+    for (let i = 0; i < rowsWithIndex.length; i += BATCH_SIZE) {
+      const chunk = rowsWithIndex.slice(i, i + BATCH_SIZE);
+      console.log('Calling Azure OpenAI with batch', (i / BATCH_SIZE) + 1, 'size', chunk.length);
+      const out = await callOpenAICompatible(chunk);
+      const results = Array.isArray(out?.results) ? out.results : [];
+      combinedResults.push(...results);
+      if (out?.warning || out?.error) batchWarnings.push(out.warning || out.error);
+      if (Array.isArray(out?.logs)) batchLogs.push(...out.logs);
+    }
+
+    console.log('AI Review - Combined Results:', combinedResults.length, 'results');
     console.log('=== LLM REVIEW REQUEST END ===');
-    res.json({ results, llm_raw: out.raw, llm_parsed: out.parsed, warning: out.warning || out.error || null, llm_logs: out.logs || [] });
+    res.json({ results: combinedResults, warning: batchWarnings.length ? batchWarnings.join(' | ') : null, llm_logs: batchLogs });
   } catch (e) {
     console.error('=== LLM REVIEW ERROR ===');
     console.error('Error:', e.message);

@@ -1,10 +1,13 @@
 import * as fuzz from 'fuzzball';
 import moment from 'moment';
+import { areVendorsEquivalent } from './vendorResolver.js';
 
 // Normalize vendor/merchant names for better matching
 const CORP_SUFFIXES = [
   'inc', 'inc.', 'llc', 'l.l.c', 'ltd', 'ltd.', 'co', 'co.', 'corp', 'corp.', 'corporation', 'company',
-  'pte', 'pte.', 'gmbh', 's.a.', 's.a', 's.l.', 'srl', 'bv', 'oy', 'ab', 'sa', 'spa', 'plc'
+  'pte', 'pte.', 'gmbh', 's.a.', 's.a', 's.l.', 'srl', 'bv', 'oy', 'ab', 'sa', 'spa', 'plc',
+  // generic words often appended
+  'business', 'supercenter', 'marketplace', 'online', 'store', 'the', 'and'
 ];
 
 function cleanVendorName(name) {
@@ -111,7 +114,24 @@ async function findGLMatches(extractedData, glEntries, options = {}) {
     const matches = [];
     
     for (const glEntry of candidateEntries) {
-        const score = calculateMatchScore(extractedData, glEntry, options.weights || {});
+        let score = calculateMatchScore(extractedData, glEntry, options.weights || {});
+        let vendorEq = false;
+        let vendorBoost = 0;
+
+        // Optional GPT assist for borderline vendor similarity cases
+        if (process.env.VENDOR_NAME_GPT_ENABLED && extractedData.merchant?.value && glEntry.vendor) {
+            const sim = vendorSimilarity(extractedData.merchant.value, glEntry.vendor);
+            if (sim >= 0.4 && sim < 0.75 && score < (minScore + 10)) {
+                try {
+                    const res = await areVendorsEquivalent(extractedData.merchant.value, glEntry.vendor);
+                    if (res?.equivalent) {
+                        vendorEq = true;
+                        vendorBoost = 15; // trust boost for equivalence
+                        score = Math.min(100, score + vendorBoost);
+                    }
+                } catch (_) {}
+            }
+        }
         
         if (score >= minScore) {
             matches.push({
@@ -128,7 +148,9 @@ async function findGLMatches(extractedData, glEntries, options = {}) {
                 signals: {
                   vendor_similarity: extractedData.merchant?.value && glEntry.vendor ? vendorSimilarity(extractedData.merchant.value, glEntry.vendor) : null,
                   amount_diff: (extractedData.amount?.value && typeof glEntry.amount === 'number') ? Math.abs(extractedData.amount.value - glEntry.amount) : null,
-                  date_diff_days: (extractedData.date?.value && glEntry.date) ? Math.abs(moment(extractedData.date.value).diff(moment(glEntry.date), 'days')) : null
+                  date_diff_days: (extractedData.date?.value && glEntry.date) ? Math.abs(moment(extractedData.date.value).diff(moment(glEntry.date), 'days')) : null,
+                  gpt_vendor_equivalent: vendorEq,
+                  gpt_vendor_boost: vendorBoost
                 }
             });
         }
