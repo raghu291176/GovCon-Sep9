@@ -5,7 +5,7 @@
   "description": "FAR Compliance Audit System with Codex Document Processing",
   "type": "module",
   "scripts": {
-    "start": "node backend/server.js",
+    "start": "PORT=${PORT:-8080} node backend/server.js",
     "dev": "nodemon backend/server.js",
     "audit": "npm audit --omit=dev",
     "audit:ci": "npm audit --omit=dev --audit-level=high",

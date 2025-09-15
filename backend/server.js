@@ -1663,14 +1663,15 @@ app.post('/api/logs', (req, res) => {
 //   console.warn('Content Understanding analyzers initialization failed (service may have limited functionality):', err.message);
 // });
 
-app.listen(port, () => {
-  console.log(`API listening on :${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`API listening on 0.0.0.0:${port}`);
   validateAzureOpenAIConfig();
   logger.info(LogCategory.SYSTEM, `Server started on port ${port}`, {
     port,
     node_version: process.version,
     platform: process.platform,
-    memory_usage: process.memoryUsage()
+    memory_usage: process.memoryUsage(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 

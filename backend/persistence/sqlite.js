@@ -107,15 +107,28 @@ export function setupSQLite(memory) {
   }
   const customPath = process.env.SQLITE_PATH && String(process.env.SQLITE_PATH).trim();
   const dbPath = customPath || path.join(__dirname, '..', 'data.sqlite');
-  if (customPath) {
-    try { fs.mkdirSync(path.dirname(customPath), { recursive: true }); } catch (_) {}
+
+  // Ensure directory exists and is writable for container environments
+  const dbDir = path.dirname(dbPath);
+  try {
+    fs.mkdirSync(dbDir, { recursive: true });
+    // Test write permissions
+    const testFile = path.join(dbDir, '.write-test');
+    fs.writeFileSync(testFile, 'test');
+    fs.unlinkSync(testFile);
+  } catch (permError) {
+    console.warn('[sqlite] Directory not writable, falling back to in-memory:', permError.message);
+    return null;
   }
+
   let db;
   try {
     db = new BetterSqlite3(dbPath);
+    console.log('[sqlite] Database opened successfully:', dbPath);
   } catch (e) {
-    console.warn('[sqlite] better-sqlite3 present but native binding unavailable. Falling back to in-memory.');
+    console.warn('[sqlite] Failed to open SQLite database. Falling back to in-memory.');
     console.warn('[sqlite] Details:', e?.message || e);
+    console.warn('[sqlite] Database path attempted:', dbPath);
     return null;
   }
   ensureTables(db);
