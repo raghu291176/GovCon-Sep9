@@ -58,6 +58,7 @@ export function renderGLTable(data) {
     } catch (_) {}
     const escape = (str) => { const div = document.createElement('div'); div.textContent = str; return div.innerHTML; };
     const approvalsCount = Number(item.approvalsCount || 0);
+    const hasApproval = approvalsCount > 0;
     return `
       <tr class="gl-row" data-row-id="${index}" data-gl-id="${safeItem.id}">
         <td><span class="status-badge status-badge--${statusClass}">${escape(safeItem.status)}</span></td>
@@ -69,7 +70,7 @@ export function renderGLTable(data) {
         <td>${escape(safeItem.vendor)}</td>
         <td class="center"><span class="attachment-count" title="${linkedCount} document(s) linked">${linkedCount}</span></td>
         <td><button class="quick-link" data-gl-id="${safeItem.id}" title="Link Documents">Link</button></td>
-        <td>${approvalsCount > 0 ? approvalsCount : '&mdash;'}</td>
+        <td><span class="approval-status ${hasApproval ? 'approved' : 'pending'}" title="${approvalsCount} approval(s)">${hasApproval ? 'Approved' : 'Pending'}</span></td>
         <td class="far-issue" title="${escape(safeItem.farIssue)}">${escape(safeItem.farIssue.substring(0, 30))}${safeItem.farIssue.length > 30 ? '...' : ''}</td>
       </tr>
     `;
@@ -331,7 +332,20 @@ function buildDetailsContent(glId) {
             ${kv('Total Amount', Number.isFinite(Number(amt)) ? amt : (ex.amount ?? null), {money:true})}
           </div>` : '';
 
-        return primary + secondary;
+        // Approvals list per document (if available)
+        let approvals = '';
+        if (Array.isArray(doc?.approvals) && doc.approvals.length) {
+          const rows = doc.approvals.map(a => {
+            const dec = (a.decision || 'unknown').toString().toUpperCase();
+            const who = a.approver || 'Unknown';
+            const title = a.title ? ` (${a.title})` : '';
+            const when = a.date ? ` on ${a.date}` : '';
+            return `<div>- ${dec}: ${who}${title}${when}</div>`;
+          }).join('');
+          approvals = `<div style="margin-top:8px;"><strong>Approvals</strong><div>${rows}</div></div>`;
+        }
+
+        return primary + secondary + approvals;
       }).join('');
       ocrBlock = perItem;
     }
