@@ -1,4 +1,4 @@
-// FAR Compliance Audit System - Complete App.js with Document Linking Modal
+// POC - Audit Materials System - Complete App.js with Document Linking Modal
 // Orchestrator (ES Modules)
 
 import { auditAll } from "./modules/services/auditService.js";
@@ -1713,7 +1713,7 @@ class FARComplianceApp {
       const reportOptions = {
         auditResults: this.auditResults,
         glData: this.glData,
-        reportTitle: 'FAR Compliance Audit Report',
+        reportTitle: 'POC - Audit Materials Report',
         contractNumber: '',
         includeSummary: true,
         includeViolations: true,

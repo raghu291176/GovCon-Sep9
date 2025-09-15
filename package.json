@@ -2,7 +2,7 @@
   "name": "govcon-far-audit",
   "version": "1.0.0",
   "private": true,
-  "description": "FAR Compliance Audit System with Codex Document Processing",
+  "description": "POC - Audit Materials System with Document Processing",
   "type": "module",
   "scripts": {
     "start": "PORT=${PORT:-8080} node backend/server.js",

@@ -1,6 +1,6 @@
 /**
  * Log Analysis Dashboard UI Component
- * Provides real-time log monitoring and analytics for the FAR Compliance Audit System
+ * Provides real-time log monitoring and analytics for the POC - Audit Materials System
  */
 
 let logsChart = null;

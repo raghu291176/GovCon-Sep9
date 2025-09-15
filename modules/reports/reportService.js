@@ -2,7 +2,7 @@ export function generateReport(options) {
   const {
     auditResults,
     glData,
-    reportTitle = 'FAR Compliance Audit Report',
+    reportTitle = 'POC - Audit Materials Report',
     contractNumber = '',
     includeSummary = true,
     includeViolations = true,
@@ -93,7 +93,7 @@ export function exportToPDF() {
     <!DOCTYPE html>
     <html>
       <head>
-        <title>FAR Compliance Audit Report</title>
+        <title>POC - Audit Materials Report</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 40px; }
           h1 { color: #1D4252; border-bottom: 2px solid #21808D; padding-bottom: 8px; }

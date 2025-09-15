@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 /**
- * Persistent Logging Service for FAR Compliance Audit System
+ * Persistent Logging Service for POC - Audit Materials System
  * Stores logs in memory and provides analysis capabilities
  */
 
