@@ -9,14 +9,32 @@ import DocumentIntelligence, { getLongRunningPoller, isUnexpected } from "@azure
  * Create Document Intelligence client
  */
 function createClient() {
-  const endpoint = process.env.DOCUMENT_INTELLIGENCE_ENDPOINT;
-  const key = process.env.DOCUMENT_INTELLIGENCE_KEY;
+  const endpoint = process.env.DOCUMENT_INTELLIGENCE_ENDPOINT || process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT;
+  const key = process.env.DOCUMENT_INTELLIGENCE_KEY || process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY;
 
   if (!endpoint || !key) {
     throw new Error('DOCUMENT_INTELLIGENCE_ENDPOINT and DOCUMENT_INTELLIGENCE_KEY environment variables are required');
   }
 
-  return DocumentIntelligence(endpoint, { key: key });
+  return DocumentIntelligence(endpoint.replace(/\/$/, ''), { key });
+}
+
+/**
+ * Retrieve Document Intelligence model metadata (existence/ready check)
+ */
+async function getModelInfo(modelId) {
+  try {
+    const client = createClient();
+    const resp = await client.path("/documentModels/{modelId}", modelId).get();
+    if (isUnexpected(resp)) {
+      return { ok: false, status: resp.status, error: resp.body?.error?.message || 'unexpected_response' };
+    }
+    return { ok: true, data: resp.body };
+  } catch (err) {
+    const status = err?.response?.status;
+    const error = err?.response?.data || err?.message;
+    return { ok: false, status, error };
+  }
 }
 
 /**
@@ -529,5 +547,6 @@ export {
   analyzeReceipt,
   analyzeInvoice,
   extractDocumentIntelligenceData,
-  createClient
+  createClient,
+  getModelInfo
 };

@@ -17,6 +17,22 @@ export async function saveGLEntries(apiBaseUrl, entries) {
   return res.json();
 }
 
+// Normalize GL spreadsheet on the server (CSV/XLSX)
+export async function normalizeGLSpreadsheet(apiBaseUrl, file, options = {}) {
+  const form = new FormData();
+  form.append('file', file);
+  const useLLM = options.useLLM !== false;
+  const url = buildUrl(apiBaseUrl, `/api/gl/normalize?useLLM=${useLLM ? 'true' : 'false'}`);
+  const res = await fetch(url, { method: 'POST', body: form });
+  const text = await res.text();
+  let data = {};
+  try { data = JSON.parse(text); } catch { data = { ok: false, error: text || 'Invalid response' }; }
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `Normalization failed (${res.status})`);
+  }
+  return data; // { ok, rows, mapping, headerRowIndex, logs, warnings, errors }
+}
+
 export async function loadServerConfig(apiBaseUrl) {
   const res = await fetch(buildUrl(apiBaseUrl, `/api/config`));
   if (!res.ok) return {};

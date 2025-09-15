@@ -134,6 +134,14 @@ export function mapExcelRows(jsonData) {
       }
     } else {
       amount = parseNumber(rawAmount);
+      // Fallback: if still zero, scan row for first currency-like numeric
+      if (amount === 0) {
+        for (const k in row) {
+          const v = row[k];
+          const n = parseNumber(v);
+          if (n !== 0) { amount = n; break; }
+        }
+      }
     }
 
     const dateVal = firstByKeys(row, dateKeys) || '';
@@ -192,6 +200,12 @@ export function mapRowsFromAOA(aoa, mapping, headerRowIndex = 0) {
     if (amountVal !== undefined) amount = parseNumber(amountVal);
     else if (debitVal !== undefined || creditVal !== undefined) {
       amount = parseNumber(debitVal) - parseNumber(creditVal);
+    } else {
+      // Fallback: scan the row for a numeric-looking cell
+      for (const cell of row) {
+        const n = parseNumber(cell);
+        if (n !== 0) { amount = n; break; }
+      }
     }
     let date = '';
     const dateVal = idx.date >= 0 ? row[idx.date] : '';

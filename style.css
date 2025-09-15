@@ -144,6 +144,39 @@
   --container-xl: 1280px;
 }
 
+/* Compact mode: reduce typography and spacing scale across the app */
+body.compact {
+  /* Typography */
+  --font-size-base: 13px;
+  --font-size-md: 13px;
+  --font-size-lg: 14px;
+  --font-size-xl: 16px;
+  --font-size-2xl: 18px;
+  --font-size-3xl: 20px;
+
+  /* Spacing */
+  --space-12: 8px;
+  --space-16: 12px;
+  --space-20: 14px;
+  --space-24: 16px;
+  --space-32: 20px;
+}
+
+/* Fine-tune table density in compact mode */
+body.compact .data-table th,
+body.compact .data-table td {
+  padding: 6px 8px;
+}
+
+/* Buttons a bit tighter in compact */
+body.compact .btn {
+  padding: 6px 10px;
+}
+
+body.compact .btn--sm {
+  padding: 3px 8px;
+}
+
 /* Dark mode colors */
 @media (prefers-color-scheme: dark) {
   :root {

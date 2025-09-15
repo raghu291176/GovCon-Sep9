@@ -324,20 +324,37 @@ async function getAnalyzerInfo(analyzerId) {
   const url = `${endpoint}/contentunderstanding/analyzers/${analyzerId}`;
 
   try {
-    const resp = await axios.get(url, {
-      headers: { 'api-key': process.env.CONTENT_UNDERSTANDING_KEY },
-      params: { 'api-version': API_VERSION },
-      timeout: 15000 // 15 second timeout
-    });
+    // Try with preferred header first, then fall back to Ocp header on 401
+    let headers = buildCUHeaders(undefined);
+    let resp;
+    try {
+      resp = await axios.get(url, {
+        headers,
+        params: { 'api-version': API_VERSION },
+        timeout: 15000 // 15 second timeout
+      });
+    } catch (e1) {
+      if (e1?.response?.status === 401 && (process.env.CONTENT_UNDERSTANDING_AUTH_HEADER || '').toLowerCase() !== 'ocp') {
+        // Retry with alternate header
+        headers = buildCUHeaders(undefined, 'ocp');
+        resp = await axios.get(url, {
+          headers,
+          params: { 'api-version': API_VERSION },
+          timeout: 15000
+        });
+      } else {
+        throw e1;
+      }
+    }
     return { ok: true, data: resp.data };
   } catch (err) {
     const status = err?.response?.status;
     const error = err?.response?.data || err?.message;
-    
+
     if (status === 404) {
       return { ok: false, status, error: 'Analyzer not found' };
     }
-    
+
     return { ok: false, status, error };
   }
 }

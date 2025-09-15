@@ -3,6 +3,7 @@
 
 import { auditAll } from "./modules/services/auditService.js";
 import { readExcelFile, mapExcelRows, readExcelAsAOA, mapRowsFromAOA, detectHeaderRow } from "./modules/services/excelService.js";
+import { normalizeGLSpreadsheet } from "./modules/services/apiService.js";
 import { renderGLTable, filterData } from "./modules/ui/tableView.js";
 import { updateDashboard as updateDashboardUI } from "./modules/ui/dashboard.js";
 import { generateReport as genReport, exportToPDF as exportPDF } from "./modules/reports/reportService.js";
@@ -73,9 +74,15 @@ class FARComplianceApp {
     // Add document modal properties
     this.documentModal = {
       currentGLItem: null,
+      // Document-level collections kept for existing UI
       availableDocuments: [],
       linkedDocumentIds: [],
       selectedDocumentIds: new Set(),
+      // Item-level collections for accurate linking under the hood
+      availableItems: [],
+      documentsById: new Map(),
+      linkedItemIds: [],
+      selectedItemIds: new Set(),
       previewCache: new Map(),
       loading: false
     };
@@ -170,7 +177,16 @@ class FARComplianceApp {
         if (cfg.apiBaseUrl) this.apiBaseUrl = cfg.apiBaseUrl;
       }
 
-      if (!this.apiBaseUrl) this.apiBaseUrl = window.location.origin;
+      // Fallbacks for when config is empty or we are running from file://
+      if (!this.apiBaseUrl) {
+        const loc = window.location;
+        if (loc && /^https?:$/.test(loc.protocol)) {
+          this.apiBaseUrl = loc.origin;
+        } else {
+          // Likely opened via file:// — use common dev server default
+          this.apiBaseUrl = 'http://localhost:3000';
+        }
+      }
 
     } catch (e) {
       console.warn('Failed to load config. Using defaults.', e);
@@ -198,7 +214,9 @@ class FARComplianceApp {
             approvalsCount: row.approvalsCount || 0,
             hasApproval: row.hasApproval || false,
             docSummary: row.doc_summary,
-            docFlagUnallowable: row.doc_flag_unallowable
+            docFlagUnallowable: row.doc_flag_unallowable,
+            document_match_score: row.document_match_score || 0,
+            documentMatchQuality: row.documentMatchQuality || ''
           }));
           console.log(`Loaded ${this.glData.length} existing GL entries from server`);
           this.logPerformance('Load Existing GL Data', perfStart, `${this.glData.length} rows`);
@@ -698,7 +716,7 @@ class FARComplianceApp {
   // DOCUMENT MODAL METHODS
 
   setupDocumentModal() {
-    const searchInput = document.getElementById('doc-search-input');
+    const searchInput = document.getElementById('modal-doc-search-input');
     if (searchInput) {
       searchInput.addEventListener('input', () => this.filterModalDocuments());
     }
@@ -793,10 +811,23 @@ class FARComplianceApp {
     const detailsContainer = document.getElementById('gl-item-details');
     if (!detailsContainer) return;
 
+    const parseClientAmount = (val) => {
+      if (val == null) return 0;
+      if (typeof val === 'number' && Number.isFinite(val)) return val;
+      let s = String(val).trim();
+      if (!s) return 0;
+      let neg = false;
+      if (/^\(.+\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+      s = s.replace(/[\$€£¥₹,\s]/g, '');
+      if (/^\d+,\d+$/.test(s)) s = s.replace(',', '.');
+      const n = Number(s);
+      return Number.isFinite(n) ? (neg ? -n : n) : 0;
+    };
+
     const details = [
       { label: 'Account', value: glItem.accountNumber || 'N/A' },
       { label: 'Description', value: glItem.description || 'N/A' },
-      { label: 'Amount', value: glItem.amount ? `$${parseFloat(glItem.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : 'N/A' },
+      { label: 'Amount', value: (glItem.amount != null && glItem.amount !== '') ? `$${parseClientAmount(glItem.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : 'N/A' },
       { label: 'Date', value: glItem.date || 'N/A' },
       { label: 'Vendor', value: glItem.vendor || 'N/A' },
       { label: 'Category', value: glItem.category || 'N/A' },
@@ -815,14 +846,40 @@ class FARComplianceApp {
     const perfStart = Date.now();
     try {
       const docsData = await listDocItems(this.apiBaseUrl);
-      this.documentModal.availableDocuments = docsData.documents || [];
-      
-      this.documentModal.linkedDocumentIds = this.documentModal.currentGLItem.linked_documents || [];
+      const documents = docsData.documents || [];
+      const items = docsData.items || [];
+      const links = docsData.links || [];
+
+      // Index documents for preview/metadata and populate collections expected by UI
+      this.documentModal.availableDocuments = documents.map(doc => ({
+        ...doc,
+        doctype: doc.doc_type || doc.doctype || 'other',
+        mimetype: doc.mime_type || doc.mimetype,
+        size: doc.meta?.size || doc.size || 0,
+        uploadDate: doc.created_at || doc.uploadDate
+      }));
+      this.documentModal.documentsById = new Map(this.documentModal.availableDocuments.map(d => [String(d.id), d]));
+      this.documentModal.availableItems = items;
+
+      // Compute linked item IDs and derive the set of linked document IDs for this GL row
+      const glId = String(this.documentModal.currentGLItem?.id || '');
+      this.documentModal.linkedItemIds = links
+        .filter(l => String(l.gl_entry_id) === glId)
+        .map(l => String(l.document_item_id));
+      this.documentModal.selectedItemIds = new Set(this.documentModal.linkedItemIds);
+
+      const linkedDocIds = new Set();
+      for (const it of items) {
+        if (this.documentModal.selectedItemIds.has(String(it.id))) {
+          linkedDocIds.add(String(it.document_id));
+        }
+      }
+      this.documentModal.linkedDocumentIds = Array.from(linkedDocIds);
       this.documentModal.selectedDocumentIds = new Set(this.documentModal.linkedDocumentIds);
-      
-      console.log('Loaded documents:', this.documentModal.availableDocuments.length);
-      console.log('Currently linked:', this.documentModal.linkedDocumentIds);
-      this.logPerformance('Load Documents & Links', perfStart, `${this.documentModal.availableDocuments.length} docs`);
+
+      console.log('Loaded docs:', this.documentModal.availableDocuments.length, 'items:', this.documentModal.availableItems.length);
+      console.log('Linked item IDs:', this.documentModal.linkedItemIds);
+      this.logPerformance('Load Documents & Links', perfStart, `${this.documentModal.availableDocuments.length} docs / ${this.documentModal.availableItems.length} items`);
     } catch (error) {
       console.error('Error loading documents:', error);
       this.documentModal.availableDocuments = [];
@@ -902,7 +959,7 @@ class FARComplianceApp {
   }
 
   getFilteredModalDocuments() {
-    const searchTerm = document.getElementById('doc-search-input')?.value.toLowerCase() || '';
+    const searchTerm = document.getElementById('modal-doc-search-input')?.value.toLowerCase() || '';
     const typeFilter = document.getElementById('doc-type-filter')?.value || '';
 
     return this.documentModal.availableDocuments.filter(doc => {
@@ -1177,6 +1234,8 @@ class FARComplianceApp {
         const total = this.docs.items.length;
         this.docs.summaryEl.textContent = `Items parsed: ${total}. Linked: ${linked}.`;
       }
+      // Keep GL table in sync with latest link counts
+      try { this.renderGLTable(); } catch (_) {}
       this.logPerformance('Refresh Docs Summary', perfStart, `${this.docs.items.length} items`);
     } catch (_) { this.logPerformance('Refresh Docs Summary (failed)', perfStart); }
   }
@@ -1226,8 +1285,8 @@ class FARComplianceApp {
 
   handleFileUpload(file) {
     const name = (file.name || '').toLowerCase();
-    if (!name.match(/\.(xlsx|xls)$/i)) {
-      alert('Please upload an Excel file (.xlsx or .xls)');
+    if (!name.match(/\.(xlsx|xls|csv)$/i)) {
+      alert('Please upload a spreadsheet file (.xlsx, .xls, .csv)');
       return;
     }
 
@@ -1266,13 +1325,27 @@ class FARComplianceApp {
       if (processingIndicator) processingIndicator.classList.remove("hidden");
 
       console.log('📁 Processing file:', this.uploadedFile.name);
-      if (typeof XLSX === 'undefined') {
-        throw new Error('Excel processing library not loaded. Please refresh the page and try again.');
+      let normalized = null;
+      try {
+        // Prefer server-side normalization (GPT + robust parsing)
+        const resp = await normalizeGLSpreadsheet(this.apiBaseUrl, this.uploadedFile, { useLLM: true });
+        normalized = resp.rows || [];
+        console.log('✅ Server normalization produced rows:', normalized.length);
+      } catch (e) {
+        console.warn('Server normalization failed, falling back to client mapping:', e.message);
       }
 
-      const jsonData = await readExcelFile(this.uploadedFile);
-      console.log('📊 Raw Excel data:', jsonData.length, 'rows');
-      this.glData = mapExcelRows(jsonData);
+      if (!normalized) {
+        // Fallback to client-side parser for XLSX-only
+        if (typeof XLSX === 'undefined') {
+          throw new Error('Excel processing library not loaded. Please refresh the page and try again.');
+        }
+        const jsonData = await readExcelFile(this.uploadedFile);
+        console.log('📊 Raw Excel data:', jsonData.length, 'rows');
+        normalized = mapExcelRows(jsonData);
+      }
+
+      this.glData = normalized;
       console.log('✅ Mapped GL data:', this.glData.length, 'entries');
 
       try {
@@ -1668,8 +1741,19 @@ class FARComplianceApp {
         throw new Error('API not configured for document linking');
       }
 
-      // apiService expects (document_item_id, gl_entry_id)
-      await linkDocItem(this.apiBaseUrl, docId, glId);
+      // apiService expects (document_item_id, gl_entry_id). Translate document -> first item.
+      let itemId = null;
+      const itemsLocal = this.documentModal?.availableItems || [];
+      const item = itemsLocal.find(i => String(i.document_id) === String(docId));
+      if (item) itemId = item.id;
+      if (!itemId) {
+        // Fallback: fetch from API
+        const data = await listDocItems(this.apiBaseUrl);
+        const fallback = (data.items || []).find(i => String(i.document_id) === String(docId));
+        if (fallback) itemId = fallback.id;
+      }
+      if (!itemId) throw new Error('No OCR item found for document');
+      await linkDocItem(this.apiBaseUrl, itemId, glId);
       
       const glItem = this.glData.find(g => String(g.id) === String(glId));
       if (glItem) {
@@ -1693,8 +1777,19 @@ class FARComplianceApp {
         throw new Error('API not configured for document unlinking');
       }
 
-      // apiService expects (document_item_id, gl_entry_id)
-      await unlinkDocItem(this.apiBaseUrl, docId, glId);
+      // apiService expects (document_item_id, gl_entry_id). Translate document -> first item.
+      let itemId = null;
+      const itemsLocal = this.documentModal?.availableItems || [];
+      const item = itemsLocal.find(i => String(i.document_id) === String(docId));
+      if (item) itemId = item.id;
+      if (!itemId) {
+        // Fallback: fetch from API
+        const data = await listDocItems(this.apiBaseUrl);
+        const fallback = (data.items || []).find(i => String(i.document_id) === String(docId));
+        if (fallback) itemId = fallback.id;
+      }
+      if (!itemId) throw new Error('No OCR item found for document');
+      await unlinkDocItem(this.apiBaseUrl, itemId, glId);
       
       const glItem = this.glData.find(g => String(g.id) === String(glId));
       if (glItem && glItem.linked_documents) {
@@ -1785,8 +1880,10 @@ class FARComplianceApp {
         links: this.docs.links.length
       });
 
-      // Always render the table, even if empty
+      // Always render the tables, even if empty
       this.renderDocumentTable();
+      // Also refresh the GL table so the Linked Docs column/count stays accurate
+      try { this.renderGLTable(); } catch (_) {}
       this.logPerformance('Refresh Document Table', perfStart, `${this.docs.documents.length} docs`);
 
     } catch (error) {
@@ -1860,7 +1957,7 @@ class FARComplianceApp {
                 </div>
               </td>
               <td>
-                <div class="document-name" title="${doc.filename}">${this.getFileExtension(doc.filename)}</div>
+                <div class="document-name" title="${doc.filename}">${doc.filename}</div>
                 <div class="document-meta" style="font-size: 12px; color: #6b7280;" title="${doc.id}">
                   ID: ${doc.id.substring(0, 8)}...
                 </div>
@@ -1891,8 +1988,8 @@ class FARComplianceApp {
               </td>
               <td>
                 <div class="document-actions">
-                  <button type="button" class="btn btn--small" onclick="window.app.viewDocument('${doc.id}')" title="View document">
-                    View
+                  <button type="button" class="btn btn--small" onclick="window.app.openDocumentDetails('${doc.id}')" title="View details and OCR data">
+                    Details
                   </button>
                   <button type="button" class="btn btn--small btn--outline" onclick="window.app.reprocessDocument('${doc.id}')" title="Reprocess with OCR">
                     Reprocess
@@ -2205,6 +2302,113 @@ class FARComplianceApp {
     window.open(url, '_blank');
   }
 
+  openDocumentDetails(docId) {
+    try {
+      const modal = document.getElementById('document-details-modal');
+      const content = document.getElementById('doc-details-content');
+      if (!modal || !content) return this.viewDocument(docId);
+      const doc = this.docs.documents.find(d => d.id === docId);
+      if (!doc) return alert('Document not found');
+
+      const docItems = this.docs.items.filter(it => it.document_id === docId);
+      const itemIds = docItems.map(it => it.id);
+      const links = this.docs.links.filter(l => itemIds.includes(l.document_item_id));
+      const glRows = links.map(l => this.glData.find(g => String(g.id) === String(l.gl_entry_id))).filter(Boolean);
+
+      const preview = this.isImageFile(doc.filename)
+        ? `<img src="${this.getDocumentUrl(doc)}" alt="${doc.filename}" class="preview-image" onerror="this.style.display='none'">`
+        : `<div class="pdf-icon" style="width:60px;height:60px;background:#ef4444;color:#fff;display:flex;align-items:center;justify-content:center;border-radius:6px;font-weight:bold;">${this.getFileExtension(doc.filename).toUpperCase().replace('.', '')}</div>`;
+
+      const ocrSnippetRaw = (doc.text_content || '');
+      const ocrSnippet = ocrSnippetRaw ? ocrSnippetRaw.slice(0, 500).replace(/</g, '&lt;') : '';
+      const meta = doc.meta || {};
+
+      // Derive parsed fields from associated items first; fallback to embedded JSON in text_content
+      let parsed = { amount: null, date: null, merchant: null, currency: null };
+      if (docItems.length) {
+        const amt = docItems.map(i => Number(i.amount)).find(v => Number.isFinite(v));
+        const dt = docItems.map(i => i.date).find(Boolean);
+        const ven = docItems.map(i => i.vendor || i.merchant).find(Boolean);
+        const cur = docItems.map(i => i.currency).find(Boolean) || 'USD';
+        parsed = { amount: amt ?? null, date: dt || null, merchant: ven || null, currency: cur };
+      } else if ((doc.text_content || '').startsWith('OCR extracted data:')) {
+        try {
+          const json = JSON.parse(doc.text_content.replace('OCR extracted data: ', ''));
+          parsed = { amount: json.amount ?? null, date: json.date ?? null, merchant: json.merchant ?? null, currency: json.currency || null };
+        } catch (_) {}
+      }
+
+      // Confidence fields intentionally omitted from UI per request
+
+      const glList = glRows.length
+        ? glRows.map(g => `<li>#${g.accountNumber || g.account_number || g.id} — ${this.truncateText(g.description || '', 80)} • $${Number(g.amount||0).toLocaleString('en-US',{minimumFractionDigits:2})} • ${g.date || ''}</li>`).join('')
+        : '<li class="gl-details-muted">No GL rows linked</li>';
+
+      content.innerHTML = `
+        <div style="display:grid;grid-template-columns:180px 1fr;gap:16px;align-items:start;">
+          <div>${preview}</div>
+          <div>
+            <div style="font-weight:600;">${doc.filename}</div>
+            <div style="color:#6b7280;font-size:12px;">${this.formatFileSize(doc.size||0)} • ${doc.uploadDate ? new Date(doc.uploadDate).toLocaleString() : ''}</div>
+            <div style="margin-top:8px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
+              <div><strong>Method</strong><div>${meta.processing_method || meta.method || '—'}</div></div>
+              <div><strong>Type</strong><div>${doc.doctype || 'other'}</div></div>
+            </div>
+            <div style="margin-top:8px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;">
+              <div><strong>Parsed Amount</strong><div>${Number.isFinite(parsed.amount) ? `$${parsed.amount.toLocaleString('en-US',{minimumFractionDigits:2})}` : '—'}</div></div>
+              <div><strong>Parsed Date</strong><div>${parsed.date || '—'}</div></div>
+              <div><strong>Parsed Merchant</strong><div>${parsed.merchant ? String(parsed.merchant) : '—'}</div></div>
+              <div><strong>Currency</strong><div>${parsed.currency || 'USD'}</div></div>
+            </div>
+          </div>
+        </div>
+        ${docItems.length ? `
+        <div style="margin-top:12px;">
+          <strong>Extracted Items (${docItems.length})</strong>
+          <div style="overflow:auto;">
+            <table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:13px;">
+              <thead>
+                <tr style="background:#f3f4f6;">
+                  <th style="text-align:left;padding:6px;border:1px solid #e5e7eb;">Vendor</th>
+                  <th style="text-align:left;padding:6px;border:1px solid #e5e7eb;">Date</th>
+                  <th style="text-align:right;padding:6px;border:1px solid #e5e7eb;">Amount</th>
+                  <th style="text-align:left;padding:6px;border:1px solid #e5e7eb;">Currency</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${docItems.map(it => {
+                  const amt = Number.isFinite(Number(it.amount)) ? `$${Number(it.amount).toLocaleString('en-US',{minimumFractionDigits:2})}` : '—';
+                  return `<tr>
+                    <td style=\\"padding:6px;border:1px solid #e5e7eb;\\">${it.vendor || it.merchant || ''}</td>
+                    <td style=\\"padding:6px;border:1px solid #e5e7eb;\\">${it.date || ''}</td>
+                    <td style=\\"padding:6px;border:1px solid #e5e7eb;text-align:right;\\">${amt}</td>
+                    <td style=\\"padding:6px;border:1px solid #e5e7eb;\\">${it.currency || 'USD'}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+        <div style="margin-top:12px;">
+          <strong>OCR Text</strong>
+          <div style="white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:8px;max-height:180px;overflow:auto;">${ocrSnippet || '<span style="color:#9ca3af;">No OCR text</span>'}</div>
+        </div>
+        <div style="margin-top:12px;">
+          <strong>Linked GL Rows (${glRows.length})</strong>
+          <ul style="margin-top:6px;padding-left:18px;">${glList}</ul>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+          <a class="btn btn--outline" href="${this.getDocumentUrl(doc)}" target="_blank">Open File</a>
+          ${glRows.length ? `<button class=\"btn btn--primary\" onclick=\"window.app.openLinkModal('${glRows[0].id}')\">Manage Links</button>` : ''}
+        </div>
+      `;
+      modal.classList.add('show');
+      modal.style.display = '';
+    } catch (e) {
+      console.error('Failed to open document details:', e);
+    }
+  }
+
   async reprocessDocument(docId) {
     const doc = this.docs.documents.find(d => d.id === docId);
     if (!doc) {
@@ -2304,11 +2508,8 @@ class FARComplianceApp {
   }
 }
 
-// Initialize app when DOM is ready
-document.addEventListener("DOMContentLoaded", async () => {
-  window.app = new FARComplianceApp();
-  await window.app.init();
-});
+// Initialization is triggered by the page loader (index.html)
+// Export only; do not auto-initialize here to avoid double init.
 
 // Export for module compatibility
 // Export for both ES modules and regular script loading

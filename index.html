@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Material Audits - POC</title>
     <!-- Content Security Policy and early error listeners -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net data:">
     <script>
       // Basic error boundaries in <head> to capture early failures
       window.addEventListener('error', (event) => {
@@ -165,6 +165,26 @@
         .subtab-content.active {
             display: block;
         }
+
+        /* Grid utilities (to compact metrics horizontally) */
+        .grid { display: grid; }
+        .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+        /* Compact overrides for inline-styled components */
+        body.compact { font-size: 13px; }
+        body.compact .container { padding: 12px; }
+        body.compact .app-header { margin-bottom: 16px; padding: 12px; }
+        body.compact .app-header h1 { font-size: 22px; margin-bottom: 4px; }
+        body.compact .app-header .subtitle { font-size: 13px; }
+        body.compact .tab-btn { padding: 10px 12px; font-size: 13px; }
+        body.compact .tab-content { padding: 16px; min-height: 380px; }
+        body.compact .metric-card { padding: 12px; }
+        body.compact .metric-value { font-size: 22px; }
+        body.compact .metric-label { font-size: 12px; }
+        body.compact .table-container .data-table th,
+        body.compact .table-container .data-table td { padding: 6px 8px; }
+        body.compact .btn { padding: 6px 10px; font-size: 13px; }
+        body.compact .btn--small { padding: 3px 6px; font-size: 11px; }
 
         /* Document Status Indicators */
         .ocr-status {
@@ -953,7 +973,7 @@
         }
     </style>
 </head>
-<body>
+<body class="compact">
     <div class="container">
         <!-- Header -->
         <div class="app-header">
@@ -982,7 +1002,7 @@
                     <p><strong>Upload your GL spreadsheet (Excel format)</strong></p>
                     <p>Supported formats: .xlsx, .xls</p>
                     <label for="file-input" class="sr-only">Upload GL spreadsheet file</label>
-                    <input type="file" id="file-input" accept=".xlsx,.xls" />
+                    <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
                     <br>
                     <div class="flex gap-4 mt-4">
                         <button id="process-gl-btn" class="btn btn--primary">Process & Analyze GL Data</button>
@@ -1104,7 +1124,7 @@
                     <div class="flex gap-4 mb-4" aria-label="Filters for document table">
                         <label for="doc-search-input" class="sr-only">Search documents</label>
                         <input type="text" id="doc-search-input" placeholder="Search documents..." class="form-input" />
-                        <label for="doc-type-filter" class="sr-only">Filter by document type</label>
+                        <label for="doc-type-filter-review" class="sr-only">Filter by document type</label>
                         <select id="doc-type-filter-review" class="form-select">
                             <option value="">All Document Types</option>
                             <option value="receipt">Receipts</option>
@@ -1258,7 +1278,7 @@
                 <!-- Document Search/Filter -->
                 <div class="document-search">
                     <div class="search-controls">
-                        <input type="text" id="doc-search-input" placeholder="Search documents..." />
+                        <input type="text" id="modal-doc-search-input" placeholder="Search documents..." />
                         <label for="doc-type-filter" class="sr-only">Filter documents by type</label>
                         <select id="doc-type-filter">
                             <option value="">All Documents</option>
@@ -1322,6 +1342,22 @@
             <div class="modal-footer">
                 <button type="button" id="confirm-cancel" class="btn btn--outline">Cancel</button>
                 <button type="button" id="confirm-ok" class="btn btn--danger">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Details Modal -->
+    <div id="document-details-modal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3>Document Details</h3>
+                <button class="modal-close" onclick="document.getElementById('document-details-modal').classList.remove('show');document.getElementById('document-details-modal').style.display='none';">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="doc-details-content"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn--outline" onclick="document.getElementById('document-details-modal').classList.remove('show');document.getElementById('document-details-modal').style.display='none';">Close</button>
             </div>
         </div>
     </div>

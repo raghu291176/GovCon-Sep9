@@ -10,7 +10,7 @@ export function renderGLTable(data) {
   if (!Array.isArray(data) || data.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="11" style="text-align: center; padding: 40px; color: #6b7280;">
+        <td colspan="15" style="text-align: center; padding: 40px; color: #6b7280;">
           <div style="margin-bottom: 8px;">📄 No GL data available</div>
           <div style="font-size: 14px;">Upload an Excel file to get started</div>
         </td>
@@ -19,13 +19,26 @@ export function renderGLTable(data) {
     return;
   }
 
+  function parseClientAmount(val) {
+    if (val == null) return 0;
+    if (typeof val === 'number' && Number.isFinite(val)) return val;
+    let s = String(val).trim();
+    if (!s) return 0;
+    let neg = false;
+    if (/^\(.+\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    s = s.replace(/[\$€£¥₹,\s]/g, '');
+    if (/^\d+,\d+$/.test(s)) s = s.replace(',', '.');
+    const n = Number(s);
+    return Number.isFinite(n) ? (neg ? -n : n) : 0;
+  }
+
   const rows = data.map((item, index) => {
     const safeItem = {
       id: item.id || index,
       status: item.status || 'PENDING',
       accountNumber: String(item.accountNumber || ''),
       description: String(item.description || ''),
-      amount: Number(item.amount) || 0,
+      amount: parseClientAmount(item.amount),
       date: String(item.date || ''),
       category: String(item.category || ''),
       vendor: String(item.vendor || ''),
@@ -33,8 +46,33 @@ export function renderGLTable(data) {
       linked_documents: Array.isArray(item.linked_documents) ? item.linked_documents : []
     };
     const statusClass = safeItem.status.toLowerCase();
-    const linkedCount = safeItem.linked_documents.length;
+    // Derive actual linked count and basic OCR fields when available
+    let linkedCount = safeItem.linked_documents.length;
+    let ocrAmount = '';
+    let ocrDate = '';
+    let ocrMerchant = '';
+    try {
+      if (typeof window !== 'undefined' && window.app && window.app.docs) {
+        const links = (window.app.docs.links || []).filter(l => String(l.gl_entry_id) === String(safeItem.id));
+        linkedCount = links.length;
+        if (links.length) {
+          const docItems = window.app.docs.items || [];
+          const itemsForGl = links.map(l => docItems.find(di => String(di.id) === String(l.document_item_id))).filter(Boolean);
+          const amt = itemsForGl.map(i => Number(i.amount)).find(v => Number.isFinite(v));
+          const dt = itemsForGl.map(i => i.date).find(Boolean);
+          const ven = itemsForGl.map(i => i.vendor || i.merchant).find(Boolean);
+          if (Number.isFinite(amt)) ocrAmount = `$${amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+          if (dt) ocrDate = String(dt);
+          if (ven) ocrMerchant = String(ven);
+        }
+      } else if (Number.isFinite(item.attachmentsCount)) {
+        linkedCount = Number(item.attachmentsCount) || 0;
+      }
+    } catch (_) {}
     const escape = (str) => { const div = document.createElement('div'); div.textContent = str; return div.innerHTML; };
+    const matchScore = Number(item.document_match_score || 0);
+    const matchDisplay = matchScore > 0 ? `${Math.round(matchScore)}%` : (item.documentMatchQuality || '—');
+    const approvalsCount = Number(item.approvalsCount || 0);
     return `
       <tr class="gl-row" data-row-id="${index}" data-gl-id="${safeItem.id}">
         <td><span class="status-badge status-badge--${statusClass}">${escape(safeItem.status)}</span></td>
@@ -45,14 +83,54 @@ export function renderGLTable(data) {
         <td>${escape(safeItem.category)}</td>
         <td>${escape(safeItem.vendor)}</td>
         <td class="center"><span class="attachment-count" title="${linkedCount} document(s) linked">${linkedCount}</span></td>
+        <td>${ocrAmount || '&mdash;'}</td>
+        <td>${ocrDate ? escape(ocrDate) : '&mdash;'}</td>
+        <td>${ocrMerchant ? escape(ocrMerchant) : '&mdash;'}</td>
+        <td>${matchDisplay}</td>
         <td><button class="quick-link" data-gl-id="${safeItem.id}" title="Link Documents">Link</button></td>
-        <td></td>
+        <td>${approvalsCount > 0 ? approvalsCount : '&mdash;'}</td>
         <td class="far-issue" title="${escape(safeItem.farIssue)}">${escape(safeItem.farIssue.substring(0, 30))}${safeItem.farIssue.length > 30 ? '...' : ''}</td>
       </tr>
     `;
   }).join('');
   tbody.innerHTML = rows;
   console.log(`✅ Table rendered with ${data.length} rows`);
+
+  // Bind row expand/collapse to show linked docs details
+  try {
+    tbody.querySelectorAll('tr.gl-row').forEach((tr) => {
+      tr.addEventListener('click', (ev) => {
+        if (ev.target.closest('button')) return; // ignore button clicks
+        const existing = tr.nextElementSibling;
+        if (existing && existing.classList.contains('gl-row-details')) {
+          existing.remove();
+          tr.classList.remove('active');
+          return;
+        }
+        const glId = tr.getAttribute('data-gl-id');
+        const detailsTr = document.createElement('tr');
+        detailsTr.className = 'gl-row-details';
+        const td = document.createElement('td');
+        td.colSpan = tr.children.length;
+        td.innerHTML = buildDetailsContent(glId);
+        detailsTr.appendChild(td);
+        tr.insertAdjacentElement('afterend', detailsTr);
+        tr.classList.add('active');
+      });
+    });
+
+    tbody.querySelectorAll('button.quick-link').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const glId = btn.getAttribute('data-gl-id');
+        if (window.app && typeof window.app.openLinkModal === 'function') {
+          window.app.openLinkModal(glId);
+        }
+      });
+    });
+  } catch (e) {
+    console.error('Failed to bind GL row interactions:', e);
+  }
 }
 
 export function filterData(auditResults, severityValue, searchTerm) {
@@ -169,6 +247,18 @@ const additionalCSS = `
 .center {
   text-align: center;
 }
+
+.gl-linked-docs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.gl-linked-doc { background: #eef2ff; border: 1px solid #c7d2fe; color: #1e40af; padding: 4px 8px; border-radius: 12px; font-size: 12px; }
+
+/* Thumbnails gallery for compact GL row details */
+.gl-linked-gallery { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.gl-thumb { position:relative; width:64px; min-width:64px; height:64px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; background:#f3f4f6; display:flex; align-items:center; justify-content:center; text-decoration:none; }
+body.compact .gl-thumb { width:56px; min-width:56px; height:56px; }
+.gl-thumb-img { width:100%; height:100%; object-fit:cover; display:block; }
+.gl-thumb-fallback { font-size:12px; font-weight:600; color:#374151; }
+.gl-thumb-caption { display:none; }
+.gl-thumb-badge { position:absolute; bottom:2px; right:2px; font-size:10px; line-height:1; background:rgba(17,24,39,0.7); color:#fff; padding:1px 4px; border-radius:3px; text-transform:uppercase; }
 `;
 
 // Inject the additional CSS if not already present
@@ -177,4 +267,60 @@ if (!document.getElementById('table-view-styles')) {
   styleElement.id = 'table-view-styles';
   styleElement.innerHTML = additionalCSS;
   document.head.appendChild(styleElement);
+}
+
+function buildDetailsContent(glId) {
+  try {
+    const links = (window.app?.docs?.links || []).filter(l => String(l.gl_entry_id) === String(glId));
+    const items = window.app?.docs?.items || [];
+    const docs = window.app?.docs?.documents || [];
+    const linked = links.map(l => {
+      const it = items.find(i => String(i.id) === String(l.document_item_id));
+      const doc = it ? docs.find(d => String(d.id) === String(it.document_id)) : null;
+      return { it, doc, link: l };
+    }).filter(x => x.doc);
+
+    const base = (window.app?.apiBaseUrl || '').replace(/\/$/, '');
+    const gallery = linked.length
+      ? `<div class="gl-linked-gallery">${linked.map(({ doc }) => {
+            const name = String(doc.filename || '').replace(/</g, '&lt;');
+            const href = doc.file_url ? `${base}${doc.file_url}` : '#';
+            const isImage = (doc.mimetype && doc.mimetype.startsWith('image/')) || /\.(png|jpe?g|gif|bmp|webp|tiff?)$/i.test(doc.filename || '');
+            const isPdf = /\.pdf$/i.test(doc.filename || '');
+            const thumb = isImage && href && href !== '#'
+              ? `<img class=\"gl-thumb-img\" src=\"${href}\" alt=\"${name}\" onerror=\"this.style.display='none'\">`
+              : `<div class=\"gl-thumb-fallback\">${isPdf ? 'PDF' : 'DOC'}</div>`;
+            const badge = (doc.doctype || 'other');
+            return `<a class=\"gl-thumb\" href=\"${href}\" target=\"_blank\" title=\"${name}\">${thumb}<span class=\"gl-thumb-badge ${badge}\">${badge}</span></a>`;
+        }).join('')}</div>`
+      : `<div class="gl-details-muted">No documents linked. Use the Link button to attach.</div>`;
+
+    let ocrBlock = '';
+    if (linked.length) {
+      // Build a rich block per linked item with all OCR fields we have
+      const perItem = linked.map(({ it, doc, link }) => {
+        const amt = Number(it?.amount);
+        const dt = it?.date || '';
+        const ven = it?.vendor || it?.merchant || '';
+        const cur = it?.currency || 'USD';
+        const method = it?.details?.processing_method || (doc?.meta?.processing_method) || '';
+        const score = (link && (link.score || link.match_score)) ? Math.round((link.score || link.match_score) * 100) + '%' : (doc?.document_match_score ? Math.round(doc.document_match_score) + '%' : '');
+        return `
+          <div class="gl-details-grid" style="margin-top:8px;">
+            <div><strong>OCR Amount</strong><div>${Number.isFinite(amt) ? `$${amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '&mdash;'}</div></div>
+            <div><strong>OCR Date</strong><div>${dt || '&mdash;'}</div></div>
+            <div><strong>OCR Merchant</strong><div>${ven ? String(ven) : '&mdash;'}</div></div>
+            <div><strong>Currency</strong><div>${cur || '&mdash;'}</div></div>
+            <div><strong>Method</strong><div>${method || '&mdash;'}</div></div>
+            ${score ? `<div><strong>Match Score</strong><div>${score}</div></div>` : ''}
+          </div>`;
+      }).join('');
+      ocrBlock = perItem;
+    }
+
+    const manage = `<div style=\"margin-top:8px;\"><button class=\"quick-link\" data-gl-id=\"${glId}\" onclick=\"window.app && window.app.openLinkModal && window.app.openLinkModal('${glId}')\">Manage Links</button></div>`;
+    return `<div class="gl-details"><div class="gl-details-section"><strong>Linked Documents:</strong> <span class="gl-details-muted">${linked.length} item(s)</span>${gallery}${ocrBlock}${manage}</div></div>`;
+  } catch (_) {
+    return `<div class="gl-details">Failed to load details</div>`;
+  }
 }

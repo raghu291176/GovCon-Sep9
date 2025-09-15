@@ -14,6 +14,7 @@ import { setupSQLite } from './persistence/sqlite.js';
 import { loadAllConfigs as loadFileConfigs, saveConfig as saveFileConfig } from './persistence/fileStore.js';
 import documentRoutes from './routes/documentRoutes.js';
 import { processDocumentWorkflow } from './services/documentWorkflow.js';
+import { normalizeSpreadsheet } from './services/spreadsheetNormalizer.js';
 // Content Understanding service replaced with Document Intelligence
 // import { initializeAnalyzers } from './services/contentUnderstandingService.js';
 
@@ -24,6 +25,40 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.join(__dirname, '..');
 app.use(express.json({ limit: '10mb' }));
+
+// Robust amount parser for server-side GL ingestion
+function parseAmountLoose(val) {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number' && Number.isFinite(val)) return val;
+  let s = String(val).trim();
+  if (!s) return 0;
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1).trim(); }
+  if (s.startsWith('-')) { negative = true; s = s.slice(1).trim(); }
+  // Remove currency symbols and spaces
+  s = s.replace(/[\$€£¥₹¢\s]/g, '');
+  // Normalize thousand/decimal separators
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+  if (hasComma && hasDot) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      // 1.234.567,89 -> remove dots, swap comma
+      s = s.replace(/\./g, '');
+      s = s.replace(',', '.');
+    } else {
+      // 1,234,567.89 -> remove commas
+      s = s.replace(/,/g, '');
+    }
+  } else if (hasComma && !hasDot) {
+    const m = s.match(/,\d{2}$/);
+    if (m) s = s.replace(',', '.'); else s = s.replace(/,/g, '');
+  }
+  // Strip trailing text (e.g., USD)
+  s = s.replace(/[A-Za-z]+$/g, '').trim();
+  const n = Number(s);
+  if (!Number.isFinite(n)) return 0;
+  return negative ? -Math.abs(n) : Math.abs(n);
+}
 
 // Helper function to update GL entries with document data
 function updateGLWithDocumentData(glMatches, documentId, extractedData) {
@@ -224,7 +259,7 @@ app.post('/api/gl', async (req, res) => {
         id,
         account_number: e.accountNumber ?? null,
         description: e.description ?? null,
-        amount: (typeof e.amount === 'number' ? e.amount : Number(e.amount)) || 0,
+        amount: parseAmountLoose(e.amount),
         date: e.date ? new Date(e.date) : null,
         category: e.category ?? null,
         vendor: e.vendor ?? null,
@@ -408,6 +443,28 @@ async function llmChat(messages, { temperature = 0, top_p = 0, max_tokens = 800,
   }
   const data = await resp.json();
   return data?.choices?.[0]?.message?.content || '';
+}
+
+// Validate Azure OpenAI endpoint and log actionable hints
+function validateAzureOpenAIConfig() {
+  try {
+    const base = String(process.env.azure_ai_endpoint || process.env.AZURE_AI_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT || '').trim();
+    if (!base) {
+      console.warn('[LLM] Azure OpenAI endpoint not set. Set AZURE_OPENAI_ENDPOINT to your OpenAI resource base URL (e.g., https://<resource>.openai.azure.com)');
+      return;
+    }
+    if (/cognitiveservices\.azure\.com/i.test(base)) {
+      console.warn('[LLM] Suspicious endpoint configured for Azure OpenAI:', base);
+      console.warn('      Expected an OpenAI resource base like https://<resource>.openai.azure.com (not *.cognitiveservices.azure.com)');
+    }
+    if (/\/openai\//i.test(base)) {
+      console.warn('[LLM] Endpoint should be the resource base without /openai path. Remove the trailing /openai/... from:', base);
+    }
+    const key = process.env.azure_openai_key || process.env.AZURE_OPENAI_KEY || process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    if (!key) console.warn('[LLM] Azure OpenAI key not set. Provide OPENAI_API_KEY or AZURE_OPENAI_API_KEY');
+    const dep = process.env.AZURE_OPENAI_DEPLOYMENT || deployment;
+    if (!dep) console.warn('[LLM] Azure OpenAI deployment name not set. Set AZURE_OPENAI_DEPLOYMENT to your deployed model name (e.g., gpt-4o)');
+  } catch (_) {}
 }
 
 // Attempt to salvage partially valid JSON: extract objects from results array
@@ -1581,6 +1638,7 @@ app.post('/api/logs', (req, res) => {
 
 app.listen(port, () => {
   console.log(`API listening on :${port}`);
+  validateAzureOpenAIConfig();
   logger.info(LogCategory.SYSTEM, `Server started on port ${port}`, {
     port,
     node_version: process.version,
@@ -1590,6 +1648,19 @@ app.listen(port, () => {
 });
 
 // ---------- Document/Link management ----------
+// Normalize GL spreadsheet (CSV/XLSX) using LLM-assisted header detection and robust parsing
+const glUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+app.post('/api/gl/normalize', glUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded' });
+    const useLLM = String(req.query.useLLM ?? 'true').toLowerCase() !== 'false';
+    const { rows, mapping, headerRowIndex, logs, warnings, errors } = await normalizeSpreadsheet(req.file.buffer, { filename: req.file.originalname, useLLM });
+    res.json({ ok: true, rows, mapping, headerRowIndex, logs, warnings, errors });
+  } catch (e) {
+    console.error('GL normalization failed:', e.message || e);
+    res.status(500).json({ ok: false, error: e.message || 'Normalization failed' });
+  }
+});
 app.get('/api/docs/items', (req, res) => {
   try {
     res.json({ items: memory.docItems, links: memory.glDocLinks, documents: memory.documents });
