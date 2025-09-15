@@ -61,6 +61,8 @@ export function renderLogDashboard() {
                 <div class="log-table-container">
                     <h3>Recent Logs <span id="log-count" class="count-badge">0</span></h3>
                     <div class="log-filters">
+                        <button class="quick-btn" onclick="quickFilterApiRequests()">API Traffic</button>
+                        <button class="quick-btn" onclick="quickFilterAll()">All</button>
                         <select id="level-filter" onchange="filterLogs()">
                             <option value="">All Levels</option>
                             <option value="ERROR">Errors</option>
@@ -227,6 +229,16 @@ export function renderLogDashboard() {
                 flex: 1;
                 min-width: 120px;
             }
+
+            .quick-btn {
+                background: #f3f4f6;
+                border: 1px solid #d1d5db;
+                color: #111827;
+                padding: 6px 10px;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            .quick-btn:hover { background: #e5e7eb; }
 
             .logs-table {
                 max-height: 400px;
@@ -531,6 +543,27 @@ window.filterLogs = function() {
 window.refreshLogs = function() {
     updateLogAnalytics();
     updateSystemHealth();
+    loadRecentLogs();
+};
+
+// Quick filters
+window.quickFilterApiRequests = function() {
+    const level = document.getElementById('level-filter');
+    const cat = document.getElementById('category-filter');
+    const search = document.getElementById('search-logs');
+    if (level) level.value = '';
+    if (cat) cat.value = 'API_REQUEST';
+    if (search) search.value = '';
+    loadRecentLogs();
+};
+
+window.quickFilterAll = function() {
+    const level = document.getElementById('level-filter');
+    const cat = document.getElementById('category-filter');
+    const search = document.getElementById('search-logs');
+    if (level) level.value = '';
+    if (cat) cat.value = '';
+    if (search) search.value = '';
     loadRecentLogs();
 };
 

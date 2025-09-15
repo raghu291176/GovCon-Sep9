@@ -17,6 +17,7 @@ import { processDocumentWorkflow } from './services/documentWorkflow.js';
 import { normalizeSpreadsheet } from './services/spreadsheetNormalizer.js';
 // Content Understanding service replaced with Document Intelligence
 // import { initializeAnalyzers } from './services/contentUnderstandingService.js';
+import { httpLogger } from './middleware/httpLogger.js';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -25,6 +26,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.join(__dirname, '..');
 app.use(express.json({ limit: '10mb' }));
+// HTTP request logging (inspired by morgan) – redacts sensitive headers
+app.use(httpLogger());
 
 // Robust amount parser for server-side GL ingestion
 function parseAmountLoose(val) {
@@ -130,16 +133,28 @@ function updateGLWithDocumentData(glMatches, documentId, extractedData) {
 }
 
 // Serve static frontend assets (single-process deployment) 
+// Serve static assets with sensible cache headers to avoid stale HTML during deployments
 app.use(express.static(ROOT_DIR, {
-  setHeaders: (res, path) => {
-    if (path.endsWith('.js')) {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js')) {
       res.set('Content-Type', 'application/javascript');
+      res.set('Cache-Control', 'public, max-age=300'); // 5 minutes for JS
+    } else if (filePath.endsWith('.css')) {
+      res.set('Cache-Control', 'public, max-age=300'); // 5 minutes for CSS
+    } else if (filePath.endsWith('.html')) {
+      // Ensure latest HTML after deploy
+      res.set('Cache-Control', 'no-store');
+    } else if (/\.(png|jpe?g|gif|webp|svg|ico|ttf|woff2?)$/i.test(filePath)) {
+      res.set('Cache-Control', 'public, max-age=86400'); // 1 day for static assets
     }
   }
 }));
 
-// Fallback route for SPA
-app.get('/', (req, res) => res.sendFile(path.join(ROOT_DIR, 'index.html')));
+// Fallback route for SPA – also disable caching for HTML shell
+app.get('/', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(ROOT_DIR, 'index.html'));
+});
 
 // Document processing routes
 app.use('/api/document-processing', documentRoutes);
@@ -558,18 +573,30 @@ async function callOpenAICompatible(rows) {
         const item = (memory.docItems || []).find(i => String(i.id) === String(l.document_item_id));
         if (!item) continue;
         const doc = (memory.documents || []).find(d => String(d.id) === String(item.document_id));
+        // Parse full extracted payload from stored text_content, when available
+        let ocrFull = null;
+        try {
+          const tc = doc?.text_content || '';
+          if (tc.startsWith('OCR extracted data: ')) {
+            const json = tc.replace('OCR extracted data: ', '');
+            ocrFull = JSON.parse(json);
+          }
+        } catch (_) { ocrFull = null; }
+
         out.push({
+          // No binary data, URLs, or file metadata are included
           documentItemId: String(item.id),
           documentId: doc ? String(doc.id) : null,
-          filename: doc ? doc.filename : null,
-          mimeType: doc ? doc.mime_type : null,
           processingMethod: item?.details?.processing_method || doc?.meta?.processing_method || null,
+          // Minimal OCR summary
           ocr: {
             amount: typeof item.amount === 'number' ? item.amount : null,
             date: item.date || null,
             vendor: item.vendor || null,
             confidence: item?.details?.confidence || doc?.meta?.confidence || null
-          }
+          },
+          // Full extraction payload (contains fields like description, summary, tax, alcohol indicators, etc.)
+          ocrFull: ocrFull
         });
         if (out.length >= maxItems) break;
       }
@@ -2035,3 +2062,33 @@ app.get('/api/requirements', (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// Instrument outbound fetch to capture external API calls
+try {
+  const originalFetch = global.fetch;
+  if (typeof originalFetch === 'function' && !global.__FETCH_INSTRUMENTED__) {
+    global.fetch = async function instrumentedFetch(input, init = {}) {
+      const start = Date.now();
+      let url = '';
+      let method = 'GET';
+      try {
+        url = typeof input === 'string' ? input : (input && input.url) || '';
+        method = (init && init.method) || (input && input.method) || 'GET';
+      } catch (_) {}
+      try {
+        const res = await originalFetch(input, init);
+        const ms = Date.now() - start;
+        logger.info(LogCategory.API_REQUEST, `OUT ${method} ${url} -> ${res.status} ${ms}ms`, {
+          direction: 'outbound', url, method, status: res.status, duration_ms: ms
+        });
+        return res;
+      } catch (err) {
+        const ms = Date.now() - start;
+        logger.error(LogCategory.API_REQUEST, `OUT ${method} ${url} -> ERROR ${ms}ms`, {
+          direction: 'outbound', url, method, duration_ms: ms, error: err?.message || String(err)
+        });
+        throw err;
+      }
+    };
+    global.__FETCH_INSTRUMENTED__ = true;
+  }
+} catch (_) {}

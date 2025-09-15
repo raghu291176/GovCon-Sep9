@@ -17,6 +17,89 @@
       window.addEventListener('unhandledrejection', (event) => {
         console.error('Unhandled Promise:', event && event.reason);
       });
+      
+      // Client-side HTTP logging (fetch + XHR). Sends compact entries to /api/logs.
+      // Inspired by morgan-style logs. Avoids recursion via X-Client-Log header.
+      (function clientHttpLogger(){
+        try {
+          if (window.__clientHttpLoggerInstalled) return; // idempotent
+          window.__clientHttpLoggerInstalled = true;
+          const ENABLED = (window.CLIENT_HTTP_LOGGING || 'on').toLowerCase() !== 'off';
+          if (!ENABLED) return;
+          const SKIP_PATH = '/api/logs';
+
+          function postLog(payload){
+            try {
+              // Use original fetch to avoid double-wrapping
+              const f = window.__originalFetch || window.fetch;
+              f(SKIP_PATH, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Client-Log': '1' },
+                body: JSON.stringify(payload)
+              }).catch(()=>{});
+            } catch(_) {}
+          }
+
+          // Patch fetch
+          window.__originalFetch = window.fetch.bind(window);
+          window.fetch = async function(input, init){
+            const start = performance.now();
+            let url = '';
+            let method = (init && init.method) || 'GET';
+            try { url = typeof input === 'string' ? input : (input && input.url) || ''; } catch(_) {}
+            const headers = (init && init.headers) || {};
+            const skip = (typeof url === 'string' && url.includes(SKIP_PATH)) || (headers && (headers['X-Client-Log'] || headers['x-client-log']));
+            const res = await window.__originalFetch(input, init);
+            if (!skip) {
+              const ms = Math.round(performance.now() - start);
+              const payload = {
+                level: 'info',
+                category: 'API_REQUEST',
+                message: `CLIENT ${method} ${url} -> ${res.status} ${ms}ms`,
+                metadata: { direction: 'client', method, url, status: res.status, duration_ms: ms }
+              };
+              postLog(payload);
+            }
+            return res;
+          };
+
+          // Patch XHR
+          const XHR = window.XMLHttpRequest;
+          if (XHR && XHR.prototype) {
+            const open = XHR.prototype.open;
+            const send = XHR.prototype.send;
+            XHR.prototype.open = function(method, url){
+              this.__clog = { method, url, start: 0 };
+              return open.apply(this, arguments);
+            };
+            XHR.prototype.send = function(){
+              if (!this.__clog) this.__clog = { method: 'GET', url: String(this.responseURL||'') };
+              this.__clog.start = performance.now();
+              const onLoadEnd = () => {
+                try {
+                  const u = String(this.__clog.url || this.responseURL || '');
+                  const skip = u.includes(SKIP_PATH);
+                  if (!skip) {
+                    const ms = Math.round(performance.now() - this.__clog.start);
+                    const payload = {
+                      level: (this.status >= 500 ? 'error' : this.status >= 400 ? 'warn' : 'info'),
+                      category: 'API_REQUEST',
+                      message: `CLIENT ${this.__clog.method} ${u} -> ${this.status} ${ms}ms`,
+                      metadata: { direction: 'client', method: this.__clog.method, url: u, status: this.status, duration_ms: ms }
+                    };
+                    postLog(payload);
+                  }
+                } catch(_) {}
+                this.removeEventListener('loadend', onLoadEnd);
+              };
+              this.addEventListener('loadend', onLoadEnd);
+              return send.apply(this, arguments);
+            };
+          }
+        } catch (e) {
+          console.warn('Client HTTP logger failed to initialize', e);
+        }
+      })();
     </script>
     
     <!-- External Libraries -->
@@ -1090,10 +1173,6 @@
                                     <th>Category</th>
                                     <th>Vendor</th>
                                     <th>Linked Docs</th>
-                                    <th>OCR Amount</th>
-                                    <th>OCR Date</th>
-                                    <th>OCR Merchant</th>
-                                    <th>Match Score</th>
                                     <th>Actions</th>
                                     <th>Approval</th>
                                     <th>FAR Issue</th>
@@ -1378,7 +1457,8 @@
                 script.onerror = reject;
                 // app.js uses ES module syntax; load as module even in fallback
                 script.type = 'module';
-                script.src = './app.js';
+                const ver = (window.__APP_VERSION__ || String(Date.now()));
+                script.src = `./app.js?v=${ver}`;
                 document.head.appendChild(script);
             });
         }
@@ -1387,8 +1467,9 @@
             try {
                 console.log('Attempting to load ES modules...');
                 
-                // Try to load the main app module with timeout
-                const loadPromise = import('./app.js');
+                // Try to load the main app module with timeout (cache-busted)
+                const ver = (window.__APP_VERSION__ || String(Date.now()));
+                const loadPromise = import(`./app.js?v=${ver}`);
                 const timeoutPromise = new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('Module load timeout')), 5000)
                 );

@@ -86,6 +86,9 @@ class FARComplianceApp {
       previewCache: new Map(),
       loading: false
     };
+
+    // Track last refresh times to throttle tab-driven fetches
+    this.lastRefresh = { gl: 0, docs: 0 };
   }
 
   async init() {
@@ -1620,12 +1623,15 @@ class FARComplianceApp {
     if (selectedBtn) selectedBtn.classList.add("active");
 
     if (tabName === "dashboard") {
-      this.updateDashboard();
+      // Refresh GL data before rendering dashboard to show latest
+      this.refreshGLView(true).catch(() => {});
     } else if (tabName === "logs") {
       this.initializeLogsTab();
     } else if (tabName === "review") {
       // Default to GL Data Review subtab
       this.switchSubtab("gl-review");
+      // Ensure GL table is fresh when entering Review
+      this.refreshGLView(false).catch(() => {});
     }
   }
 
@@ -1665,8 +1671,27 @@ class FARComplianceApp {
       console.log('📄 Loading Document Review content...');
       this.loadDocumentReview();
     } else if (subtabName === "gl-review") {
-      // Refresh GL table if needed
+      // Refresh GL table when switching to GL Review
       console.log('📊 GL Review subtab activated');
+      this.refreshGLView(false).catch(() => {});
+    }
+  }
+
+  // Refresh GL data from server and update dependent views
+  async refreshGLView(light = false) {
+    const perfStart = Date.now();
+    try {
+      const now = Date.now();
+      if (now - (this.lastRefresh.gl || 0) >= 5000) {
+        this.lastRefresh.gl = now;
+        await this.loadExistingGLData();
+      }
+      this.renderGLTable();
+      if (!light) this.updateDashboard();
+      this.logPerformance('Refresh GL on tab switch', perfStart, `${this.glData?.length || 0} rows`);
+    } catch (e) {
+      console.warn('GL refresh on tab switch failed:', e);
+      this.logPerformance('Refresh GL on tab switch (failed)', perfStart);
     }
   }
 
@@ -1826,14 +1851,26 @@ class FARComplianceApp {
   async loadDocumentReview() {
     const perfStart = Date.now();
     try {
-      await this.refreshDocumentTable();
-      await this.updateDocumentMetrics();
+      await this.refreshDocsView(5000); // throttle to <5s between fetches
       await this.setupDocumentFilters();
       this.logPerformance('Load Document Review', perfStart);
     } catch (error) {
       console.error('Error loading document review:', error);
       this.logPerformance('Load Document Review (failed)', perfStart);
     }
+  }
+
+  // Throttled docs refresh (default min interval: 5s)
+  async refreshDocsView(minIntervalMs = 5000) {
+    const now = Date.now();
+    if (now - (this.lastRefresh.docs || 0) < minIntervalMs) {
+      // Too soon; ensure current tables/metrics are rendered
+      try { this.renderDocumentTable(); await this.updateDocumentMetrics(); } catch (_) {}
+      return;
+    }
+    this.lastRefresh.docs = now;
+    await this.refreshDocumentTable();
+    await this.updateDocumentMetrics();
   }
 
   async refreshDocumentTable() {
@@ -2344,6 +2381,31 @@ class FARComplianceApp {
         ? glRows.map(g => `<li>#${g.accountNumber || g.account_number || g.id} — ${this.truncateText(g.description || '', 80)} • $${Number(g.amount||0).toLocaleString('en-US',{minimumFractionDigits:2})} • ${g.date || ''}</li>`).join('')
         : '<li class="gl-details-muted">No GL rows linked</li>';
 
+      // Parse full extracted data payload when present
+      let ex = null;
+      try {
+        if ((doc.text_content || '').startsWith('OCR extracted data: ')) {
+          ex = JSON.parse(doc.text_content.replace('OCR extracted data: ', ''));
+        }
+      } catch(_) {}
+
+      function fmtVal(value, opts = {}) {
+        if (value === null || value === undefined || value === '') return '—';
+        if (opts.money && Number.isFinite(Number(value))) {
+          return `$${Number(value).toLocaleString('en-US',{minimumFractionDigits:2})}`;
+        }
+        if (Array.isArray(value)) {
+          return value.map((x) => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(', ');
+        }
+        if (typeof value === 'object') {
+          try { return JSON.stringify(value); } catch { return String(value); }
+        }
+        return String(value);
+      }
+      function kv(label, value, opts = {}) {
+        return `<div><strong>${label}</strong><div>${fmtVal(value, opts)}</div></div>`;
+      }
+
       content.innerHTML = `
         <div style="display:grid;grid-template-columns:180px 1fr;gap:16px;align-items:start;">
           <div>${preview}</div>
@@ -2360,6 +2422,25 @@ class FARComplianceApp {
               <div><strong>Parsed Merchant</strong><div>${parsed.merchant ? String(parsed.merchant) : '—'}</div></div>
               <div><strong>Currency</strong><div>${parsed.currency || 'USD'}</div></div>
             </div>
+            ${ex ? `
+            <div style=\"margin-top:12px;\">
+              <strong>Document Details</strong>
+              <div class=\"gl-details-grid\" style=\"margin-top:6px;grid-template-columns:repeat(3,minmax(0,1fr));\">
+                ${kv('Description', ex.description)}
+                ${kv('Summary', ex.summary)}
+                ${kv('Invoice ID', ex.invoiceId)}
+                ${kv('Customer Name', ex.customerName)}
+                ${kv('Billing Address', ex.billingAddress)}
+                ${kv('Merchant Address', ex.merchantAddress)}
+                ${kv('Merchant Phone', ex.merchantPhone)}
+                ${kv('Receipt Type', ex.receiptType)}
+                ${kv('Transaction Time', ex.transactionTime)}
+                ${kv('Subtotal', ex.subtotal ?? ex.subTotal, {money:true})}
+                ${kv('Tax', ex.tax, {money:true})}
+                ${kv('Tip', ex.tip, {money:true})}
+                ${kv('Due Date', ex.dueDate)}
+              </div>
+            </div>` : ''}
           </div>
         </div>
         ${docItems.length ? `

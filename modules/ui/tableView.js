@@ -10,7 +10,7 @@ export function renderGLTable(data) {
   if (!Array.isArray(data) || data.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="15" style="text-align: center; padding: 40px; color: #6b7280;">
+        <td colspan="11" style="text-align: center; padding: 40px; color: #6b7280;">
           <div style="margin-bottom: 8px;">📄 No GL data available</div>
           <div style="font-size: 14px;">Upload an Excel file to get started</div>
         </td>
@@ -46,32 +46,17 @@ export function renderGLTable(data) {
       linked_documents: Array.isArray(item.linked_documents) ? item.linked_documents : []
     };
     const statusClass = safeItem.status.toLowerCase();
-    // Derive actual linked count and basic OCR fields when available
+    // Derive actual linked count when available
     let linkedCount = safeItem.linked_documents.length;
-    let ocrAmount = '';
-    let ocrDate = '';
-    let ocrMerchant = '';
     try {
       if (typeof window !== 'undefined' && window.app && window.app.docs) {
         const links = (window.app.docs.links || []).filter(l => String(l.gl_entry_id) === String(safeItem.id));
         linkedCount = links.length;
-        if (links.length) {
-          const docItems = window.app.docs.items || [];
-          const itemsForGl = links.map(l => docItems.find(di => String(di.id) === String(l.document_item_id))).filter(Boolean);
-          const amt = itemsForGl.map(i => Number(i.amount)).find(v => Number.isFinite(v));
-          const dt = itemsForGl.map(i => i.date).find(Boolean);
-          const ven = itemsForGl.map(i => i.vendor || i.merchant).find(Boolean);
-          if (Number.isFinite(amt)) ocrAmount = `$${amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-          if (dt) ocrDate = String(dt);
-          if (ven) ocrMerchant = String(ven);
-        }
       } else if (Number.isFinite(item.attachmentsCount)) {
         linkedCount = Number(item.attachmentsCount) || 0;
       }
     } catch (_) {}
     const escape = (str) => { const div = document.createElement('div'); div.textContent = str; return div.innerHTML; };
-    const matchScore = Number(item.document_match_score || 0);
-    const matchDisplay = matchScore > 0 ? `${Math.round(matchScore)}%` : (item.documentMatchQuality || '—');
     const approvalsCount = Number(item.approvalsCount || 0);
     return `
       <tr class="gl-row" data-row-id="${index}" data-gl-id="${safeItem.id}">
@@ -83,10 +68,6 @@ export function renderGLTable(data) {
         <td>${escape(safeItem.category)}</td>
         <td>${escape(safeItem.vendor)}</td>
         <td class="center"><span class="attachment-count" title="${linkedCount} document(s) linked">${linkedCount}</span></td>
-        <td>${ocrAmount || '&mdash;'}</td>
-        <td>${ocrDate ? escape(ocrDate) : '&mdash;'}</td>
-        <td>${ocrMerchant ? escape(ocrMerchant) : '&mdash;'}</td>
-        <td>${matchDisplay}</td>
         <td><button class="quick-link" data-gl-id="${safeItem.id}" title="Link Documents">Link</button></td>
         <td>${approvalsCount > 0 ? approvalsCount : '&mdash;'}</td>
         <td class="far-issue" title="${escape(safeItem.farIssue)}">${escape(safeItem.farIssue.substring(0, 30))}${safeItem.farIssue.length > 30 ? '...' : ''}</td>
@@ -302,18 +283,55 @@ function buildDetailsContent(glId) {
         const amt = Number(it?.amount);
         const dt = it?.date || '';
         const ven = it?.vendor || it?.merchant || '';
-        const cur = it?.currency || 'USD';
         const method = it?.details?.processing_method || (doc?.meta?.processing_method) || '';
         const score = (link && (link.score || link.match_score)) ? Math.round((link.score || link.match_score) * 100) + '%' : (doc?.document_match_score ? Math.round(doc.document_match_score) + '%' : '');
-        return `
+
+        // Attempt to parse extended extracted data from doc.text_content
+        let ex = null;
+        try {
+          if ((doc?.text_content || '').startsWith('OCR extracted data: ')) {
+            ex = JSON.parse(doc.text_content.replace('OCR extracted data: ', ''));
+          }
+        } catch(_) {}
+        const fmtVal = (value, opts={}) => {
+          if (value === null || value === undefined || value === '') return '—';
+          if (opts.money && Number.isFinite(Number(value))) return `$${Number(value).toLocaleString('en-US',{minimumFractionDigits:2})}`;
+          if (Array.isArray(value)) return value.map(x => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(', ');
+          if (typeof value === 'object') { try { return JSON.stringify(value); } catch { return String(value); } }
+          return String(value);
+        };
+        const kv = (label, value, opts={}) => `<div><strong>${label}</strong><div>${fmtVal(value, opts)}</div></div>`;
+
+        // Primary info row (renamed and reordered)
+        const idLabel = 'Invoice ID / Receipt ID';
+        const invOrReceipt = ex?.invoiceId ?? ex?.receiptId ?? null;
+        const primary = `
           <div class="gl-details-grid" style="margin-top:8px;">
-            <div><strong>OCR Amount</strong><div>${Number.isFinite(amt) ? `$${amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '&mdash;'}</div></div>
-            <div><strong>OCR Date</strong><div>${dt || '&mdash;'}</div></div>
-            <div><strong>OCR Merchant</strong><div>${ven ? String(ven) : '&mdash;'}</div></div>
-            <div><strong>Currency</strong><div>${cur || '&mdash;'}</div></div>
-            <div><strong>Method</strong><div>${method || '&mdash;'}</div></div>
-            ${score ? `<div><strong>Match Score</strong><div>${score}</div></div>` : ''}
+            ${kv('Transaction Date', dt || '—')}
+            ${kv('Merchant', ven || '—')}
+            ${kv(idLabel, invOrReceipt || '—')}
+            ${kv('Method', method || '—')}
+            ${score ? kv('Match Score', score) : ''}
           </div>`;
+
+        // Secondary details (Total Amount moved to bottom; Due Date removed)
+        const secondary = ex ? `
+          <div class="gl-details-grid" style="margin-top:8px;grid-template-columns:repeat(3,minmax(0,1fr));">
+            ${kv('Description', ex.description)}
+            ${kv('Summary', ex.summary)}
+            ${kv('Customer Name', ex.customerName)}
+            ${kv('Billing Address', ex.billingAddress)}
+            ${kv('Merchant Address', ex.merchantAddress)}
+            ${kv('Merchant Phone', ex.merchantPhone)}
+            ${kv('Receipt Type', ex.receiptType)}
+            ${kv('Transaction Time', ex.transactionTime)}
+            ${kv('Subtotal', ex.subtotal ?? ex.subTotal, {money:true})}
+            ${kv('Tax', ex.tax, {money:true})}
+            ${kv('Tip', ex.tip, {money:true})}
+            ${kv('Total Amount', Number.isFinite(Number(amt)) ? amt : (ex.amount ?? null), {money:true})}
+          </div>` : '';
+
+        return primary + secondary;
       }).join('');
       ocrBlock = perItem;
     }
