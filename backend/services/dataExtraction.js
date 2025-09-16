@@ -43,18 +43,18 @@ function extractDate(fields) {
             let dateValue = fields[fieldName].value;
             
             if (dateValue instanceof Date) {
-                const formattedDate = moment(dateValue).format('YYYY-MM-DD');
+                const formattedDate = moment(dateValue).format('MM/DD/YYYY');
                 return {
                     value: formattedDate,
                     confidence: fields[fieldName].confidence || 0
                 };
             }
-            
+
             if (typeof dateValue === 'string') {
                 const parsedDate = moment(dateValue);
                 if (parsedDate.isValid()) {
                     return {
-                        value: parsedDate.format('YYYY-MM-DD'),
+                        value: parsedDate.format('MM/DD/YYYY'),
                         confidence: fields[fieldName].confidence || 0
                     };
                 }

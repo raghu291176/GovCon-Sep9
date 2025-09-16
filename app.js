@@ -928,7 +928,7 @@ class FARComplianceApp {
             <div class="document-name">${doc.filename}</div>
             <div class="document-meta">
               ${fileSize} - ${doc.mimetype || 'Unknown type'}
-              ${doc.uploadDate ? `- ${new Date(doc.uploadDate).toLocaleDateString()}` : ''}
+              ${doc.uploadDate ? `- ${new Date(doc.uploadDate).toLocaleDateString('en-US')}` : ''}
             </div>
           </div>
           <span class="document-type-badge ${docType}">${docType}</span>
@@ -1340,7 +1340,7 @@ class FARComplianceApp {
           const allowOverride = confirm(
             `This exact Excel file has already been uploaded.\n\n` +
             `Previously uploaded: ${e.existingFile.filename}\n` +
-            `Upload date: ${new Date(e.existingFile.uploadedAt).toLocaleString()}\n` +
+            `Upload date: ${new Date(e.existingFile.uploadedAt).toLocaleDateString('en-US')}\n` +
             `Entries: ${e.existingFile.entryCount}\n\n` +
             `Do you want to proceed anyway?`
           );
@@ -1361,7 +1361,7 @@ class FARComplianceApp {
           const allowOverride = confirm(
             `A file with this name has already been uploaded, but with different content.\n\n` +
             `Previously uploaded: ${e.existingFile.filename}\n` +
-            `Upload date: ${new Date(e.existingFile.uploadedAt).toLocaleString()}\n` +
+            `Upload date: ${new Date(e.existingFile.uploadedAt).toLocaleDateString('en-US')}\n` +
             `Entries: ${e.existingFile.entryCount}\n\n` +
             `Do you want to replace it?`
           );
@@ -2051,7 +2051,7 @@ class FARComplianceApp {
               </td>
               <td>${this.formatFileSize(doc.size || 0)}</td>
               <td title="${doc.uploadDate}">
-                ${doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString() : 'Unknown'}
+                ${doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-US') : 'Unknown'}
               </td>
               <td>
                 <span class="ocr-status ${ocrStatus.class}" title="${ocrStatus.description || ocrStatus.text}">
@@ -2456,7 +2456,7 @@ class FARComplianceApp {
           <div>${preview}</div>
           <div>
             <div style="font-weight:600;">${doc.filename}</div>
-            <div style="color:#6b7280;font-size:12px;">${this.formatFileSize(doc.size||0)} • ${doc.uploadDate ? new Date(doc.uploadDate).toLocaleString() : ''}</div>
+            <div style="color:#6b7280;font-size:12px;">${this.formatFileSize(doc.size||0)} • ${doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-US') : ''}</div>
             <div style="margin-top:8px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
               <div><strong>Method</strong><div>${meta.processing_method || meta.method || '—'}</div></div>
               <div><strong>Type</strong><div>${doc.doctype || 'other'}</div></div>

@@ -1993,7 +1993,7 @@
                         <div style="margin-top: 20px; padding: 15px; background: #f3f4f6; border-radius: 6px;">
                             <strong>System Status:</strong> Backend ${window.location.origin.includes('localhost') ? 'Running' : 'Unknown'}<br>
                             <strong>Module Loading:</strong> Fallback Mode<br>
-                            <strong>Time:</strong> ${new Date().toLocaleString()}
+                            <strong>Time:</strong> ${new Date().toLocaleDateString('en-US')}
                         </div>
                     </div>
                 `;
@@ -2356,7 +2356,7 @@
         function formatDate(dateString) {
             if (!dateString) return 'Unknown date';
             try {
-                return new Date(dateString).toLocaleDateString();
+                return new Date(dateString).toLocaleDateString('en-US');
             } catch (e) {
                 return 'Invalid date';
             }

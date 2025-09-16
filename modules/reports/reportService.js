@@ -13,7 +13,7 @@ export function generateReport(options) {
   if (contractNumber) {
     reportContent += `<p><strong>Contract Number:</strong> ${contractNumber}</p>`;
   }
-  reportContent += `<p><strong>Report Date:</strong> ${new Date().toLocaleDateString()}</p>`;
+  reportContent += `<p><strong>Report Date:</strong> ${new Date().toLocaleDateString('en-US')}</p>`;
 
   const dataToAnalyze = (auditResults && auditResults.length > 0) ? auditResults : (glData || []);
 
