@@ -18,6 +18,16 @@ import { normalizeSpreadsheet } from './services/spreadsheetNormalizer.js';
 // Content Understanding service replaced with Document Intelligence
 // import { initializeAnalyzers } from './services/contentUnderstandingService.js';
 import { httpLogger } from './middleware/httpLogger.js';
+import { performStartupCleanup } from '../scripts/startup-cleanup.js';
+
+// Perform startup cleanup on service restart
+// This ensures a clean state every time the service starts up
+if (process.env.CLEAN_ON_START !== 'false') {
+  console.log('🔄 Service starting - performing cleanup...');
+  performStartupCleanup();
+} else {
+  console.log('⏭️ Startup cleanup skipped (CLEAN_ON_START=false)');
+}
 
 const app = express();
 const port = process.env.PORT || 3000;

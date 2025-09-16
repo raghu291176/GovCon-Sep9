@@ -6,7 +6,10 @@
   "type": "module",
   "scripts": {
     "start": "PORT=${PORT:-8080} node backend/server.js",
+    "start:no-clean": "PORT=${PORT:-8080} CLEAN_ON_START=false node backend/server.js",
+    "cleanup": "node scripts/startup-cleanup.js",
     "dev": "nodemon backend/server.js",
+    "dev:no-clean": "CLEAN_ON_START=false nodemon backend/server.js",
     "audit": "npm audit --omit=dev",
     "audit:ci": "npm audit --omit=dev --audit-level=high",
     "audit:fix": "npm audit fix --omit=dev || true"
