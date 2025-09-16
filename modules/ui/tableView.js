@@ -32,6 +32,20 @@ export function renderGLTable(data) {
     return Number.isFinite(n) ? (neg ? -n : n) : 0;
   }
 
+  function formatDate(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return dateStr; // Return original if invalid
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const day = date.getDate().toString().padStart(2, '0');
+      const year = date.getFullYear();
+      return `${month}/${day}/${year}`;
+    } catch (e) {
+      return dateStr; // Return original if parsing fails
+    }
+  }
+
   const rows = data.map((item, index) => {
     const safeItem = {
       id: item.id || index,
@@ -65,7 +79,7 @@ export function renderGLTable(data) {
         <td>${escape(safeItem.accountNumber)}</td>
         <td title="${escape(safeItem.description)}">${escape(safeItem.description.substring(0, 50))}${safeItem.description.length > 50 ? '...' : ''}</td>
         <td class="amount">$${safeItem.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-        <td>${escape(safeItem.date)}</td>
+        <td>${escape(formatDate(safeItem.date))}</td>
         <td>${escape(safeItem.category)}</td>
         <td>${escape(safeItem.vendor)}</td>
         <td class="center"><span class="attachment-count" title="${linkedCount} document(s) linked">${linkedCount}</span></td>
