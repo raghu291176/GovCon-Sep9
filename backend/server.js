@@ -1678,17 +1678,133 @@ app.listen(port, '0.0.0.0', () => {
 // ---------- Document/Link management ----------
 // Normalize GL spreadsheet (CSV/XLSX) using LLM-assisted header detection and robust parsing
 const glUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+// Track uploaded GL files in memory for duplicate detection
+memory.uploadedGLFiles = memory.uploadedGLFiles || [];
+
 app.post('/api/gl/normalize', glUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded' });
+
+    // Check for duplicate file uploads
+    const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    const filename = req.file.originalname.toLowerCase();
+
+    // Check for exact duplicate (same hash)
+    const exactDuplicate = memory.uploadedGLFiles.find(f => f.hash === fileHash);
+    if (exactDuplicate) {
+      return res.status(400).json({
+        ok: false,
+        error: 'This exact Excel file has already been uploaded',
+        code: 'DUPLICATE_FILE',
+        existingFile: {
+          filename: exactDuplicate.filename,
+          uploadedAt: exactDuplicate.uploadedAt,
+          entryCount: exactDuplicate.entryCount
+        }
+      });
+    }
+
+    // Check for filename duplicate (same name, different content)
+    const filenameDuplicate = memory.uploadedGLFiles.find(f => f.filename.toLowerCase() === filename);
+    if (filenameDuplicate && req.query.allowDuplicate !== 'true') {
+      return res.status(400).json({
+        ok: false,
+        error: 'A file with this name has already been uploaded. Use allowDuplicate=true to override.',
+        code: 'DUPLICATE_FILENAME',
+        existingFile: {
+          filename: filenameDuplicate.filename,
+          uploadedAt: filenameDuplicate.uploadedAt,
+          entryCount: filenameDuplicate.entryCount
+        }
+      });
+    }
+
     const useLLM = String(req.query.useLLM ?? 'true').toLowerCase() !== 'false';
     const { rows, mapping, headerRowIndex, logs, warnings, errors } = await normalizeSpreadsheet(req.file.buffer, { filename: req.file.originalname, useLLM });
-    res.json({ ok: true, rows, mapping, headerRowIndex, logs, warnings, errors });
+
+    // Store file metadata for duplicate detection
+    const fileMetadata = {
+      id: crypto.randomUUID(),
+      filename: req.file.originalname,
+      hash: fileHash,
+      size: req.file.size,
+      uploadedAt: new Date().toISOString(),
+      entryCount: rows.length,
+      processing: {
+        mapping,
+        headerRowIndex,
+        logs,
+        warnings,
+        errors
+      }
+    };
+
+    // Remove old entry with same filename if allowing duplicates
+    if (filenameDuplicate && req.query.allowDuplicate === 'true') {
+      memory.uploadedGLFiles = memory.uploadedGLFiles.filter(f => f.filename.toLowerCase() !== filename);
+    }
+
+    memory.uploadedGLFiles.push(fileMetadata);
+
+    res.json({
+      ok: true,
+      rows,
+      mapping,
+      headerRowIndex,
+      logs,
+      warnings,
+      errors,
+      fileMetadata: {
+        id: fileMetadata.id,
+        filename: fileMetadata.filename,
+        uploadedAt: fileMetadata.uploadedAt,
+        entryCount: fileMetadata.entryCount
+      }
+    });
   } catch (e) {
     console.error('GL normalization failed:', e.message || e);
     res.status(500).json({ ok: false, error: e.message || 'Normalization failed' });
   }
 });
+
+// Get list of uploaded GL files
+app.get('/api/gl/files', (req, res) => {
+  try {
+    const files = (memory.uploadedGLFiles || []).map(f => ({
+      id: f.id,
+      filename: f.filename,
+      size: f.size,
+      uploadedAt: f.uploadedAt,
+      entryCount: f.entryCount
+    }));
+    res.json({ success: true, files });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Get list of uploaded documents
+app.get('/api/documents/files', (req, res) => {
+  try {
+    const files = (memory.documents || []).map(d => ({
+      id: d.id,
+      filename: d.filename,
+      mime_type: d.mime_type,
+      file_url: d.file_url,
+      created_at: d.created_at,
+      doc_type: d.doc_type,
+      meta: {
+        file_size: d.meta?.file_size,
+        ocr_status: d.meta?.ocr_status || 'pending'
+      }
+    }));
+    res.json({ success: true, files });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 app.get('/api/docs/items', (req, res) => {
   try {
     res.json({ items: memory.docItems, links: memory.glDocLinks, documents: memory.documents });

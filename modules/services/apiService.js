@@ -22,12 +22,22 @@ export async function normalizeGLSpreadsheet(apiBaseUrl, file, options = {}) {
   const form = new FormData();
   form.append('file', file);
   const useLLM = options.useLLM !== false;
-  const url = buildUrl(apiBaseUrl, `/api/gl/normalize?useLLM=${useLLM ? 'true' : 'false'}`);
+  const allowDuplicate = options.allowDuplicate || false;
+  const url = buildUrl(apiBaseUrl, `/api/gl/normalize?useLLM=${useLLM ? 'true' : 'false'}&allowDuplicate=${allowDuplicate ? 'true' : 'false'}`);
+
   const res = await fetch(url, { method: 'POST', body: form });
   const text = await res.text();
   let data = {};
   try { data = JSON.parse(text); } catch { data = { ok: false, error: text || 'Invalid response' }; }
+
   if (!res.ok || data.ok === false) {
+    // Handle duplicate file errors specifically
+    if (data.code === 'DUPLICATE_FILE' || data.code === 'DUPLICATE_FILENAME') {
+      const error = new Error(data.error);
+      error.code = data.code;
+      error.existingFile = data.existingFile;
+      throw error;
+    }
     throw new Error(data.error || `Normalization failed (${res.status})`);
   }
   return data; // { ok, rows, mapping, headerRowIndex, logs, warnings, errors }

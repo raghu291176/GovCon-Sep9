@@ -1335,7 +1335,52 @@ class FARComplianceApp {
         normalized = resp.rows || [];
         console.log('✅ Server normalization produced rows:', normalized.length);
       } catch (e) {
-        console.warn('Server normalization failed, falling back to client mapping:', e.message);
+        // Handle duplicate file errors
+        if (e.code === 'DUPLICATE_FILE') {
+          const allowOverride = confirm(
+            `This exact Excel file has already been uploaded.\n\n` +
+            `Previously uploaded: ${e.existingFile.filename}\n` +
+            `Upload date: ${new Date(e.existingFile.uploadedAt).toLocaleString()}\n` +
+            `Entries: ${e.existingFile.entryCount}\n\n` +
+            `Do you want to proceed anyway?`
+          );
+          if (allowOverride) {
+            try {
+              const resp = await normalizeGLSpreadsheet(this.apiBaseUrl, this.uploadedFile, { useLLM: true, allowDuplicate: true });
+              normalized = resp.rows || [];
+              console.log('✅ Server normalization with override produced rows:', normalized.length);
+            } catch (retryError) {
+              console.warn('Server normalization with override failed:', retryError.message);
+              throw retryError;
+            }
+          } else {
+            console.log('User cancelled duplicate upload');
+            return;
+          }
+        } else if (e.code === 'DUPLICATE_FILENAME') {
+          const allowOverride = confirm(
+            `A file with this name has already been uploaded, but with different content.\n\n` +
+            `Previously uploaded: ${e.existingFile.filename}\n` +
+            `Upload date: ${new Date(e.existingFile.uploadedAt).toLocaleString()}\n` +
+            `Entries: ${e.existingFile.entryCount}\n\n` +
+            `Do you want to replace it?`
+          );
+          if (allowOverride) {
+            try {
+              const resp = await normalizeGLSpreadsheet(this.apiBaseUrl, this.uploadedFile, { useLLM: true, allowDuplicate: true });
+              normalized = resp.rows || [];
+              console.log('✅ Server normalization with filename override produced rows:', normalized.length);
+            } catch (retryError) {
+              console.warn('Server normalization with filename override failed:', retryError.message);
+              throw retryError;
+            }
+          } else {
+            console.log('User cancelled filename duplicate upload');
+            return;
+          }
+        } else {
+          console.warn('Server normalization failed, falling back to client mapping:', e.message);
+        }
       }
 
       if (!normalized) {

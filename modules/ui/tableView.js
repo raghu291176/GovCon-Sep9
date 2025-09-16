@@ -78,6 +78,11 @@ export function renderGLTable(data) {
   tbody.innerHTML = rows;
   console.log(`✅ Table rendered with ${data.length} rows`);
 
+  // Store data for sorting functionality
+  if (typeof window !== 'undefined' && window.currentGLData !== undefined) {
+    window.currentGLData = data;
+  }
+
   // Bind row expand/collapse to show linked docs details
   try {
     tbody.querySelectorAll('tr.gl-row').forEach((tr) => {

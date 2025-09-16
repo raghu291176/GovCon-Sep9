@@ -514,13 +514,15 @@
 
         .data-table th,
         .data-table td {
-            padding: 12px;
+            padding: 8px 10px;
             text-align: left;
             border-bottom: 1px solid #F3F4F6;
+            font-size: 13px;
         }
 
         .data-table th {
             background: #F9FAFB;
+            font-size: 13px;
             font-weight: 600;
             color: #374151;
             border-bottom: 1px solid #E5E7EB;
@@ -1008,10 +1010,218 @@
             color: #166534;
         }
 
+        /* Uploaded Files List Styles */
+        .file-list {
+            margin-top: 16px;
+        }
+
+        .file-list-empty {
+            text-align: center;
+            color: #6b7280;
+            font-style: italic;
+            padding: 20px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            background: #f9fafb;
+        }
+
+        .file-item:hover {
+            background: #f3f4f6;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: #6b7280;
+            display: flex;
+            gap: 12px;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .file-status {
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .file-status.uploaded {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .file-status.processing {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .file-status.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .file-type-icon {
+            margin-right: 8px;
+            font-size: 16px;
+        }
+
+        /* Sortable Table Headers */
+        .sortable-header {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 20px;
+        }
+
+        .sortable-header:hover {
+            background: #e5e7eb;
+        }
+
+        .sortable-header.sorted-asc::after {
+            content: "▲";
+            position: absolute;
+            right: 8px;
+            font-size: 10px;
+            color: #3b82f6;
+        }
+
+        .sortable-header.sorted-desc::after {
+            content: "▼";
+            position: absolute;
+            right: 8px;
+            font-size: 10px;
+            color: #3b82f6;
+        }
+
+        .sortable-header:not(.sorted-asc):not(.sorted-desc)::after {
+            content: "⬍";
+            position: absolute;
+            right: 8px;
+            font-size: 10px;
+            color: #9ca3af;
+            opacity: 0.6;
+        }
+
+        /* Compact Side-by-Side Upload Layout */
+        .upload-section {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .upload-left, .upload-right {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .compact-card {
+            padding: 16px;
+            margin-bottom: 0;
+        }
+
+        .compact-title {
+            font-size: 18px;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .compact-upload {
+            padding: 16px;
+            min-height: auto;
+        }
+
+        .compact-upload p {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+        }
+
+        .compact-upload input[type="file"] {
+            margin: 8px 0;
+        }
+
+        .btn--compact {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+
+        .compact-info {
+            padding: 12px;
+            margin-top: 12px;
+            background: #f8fafc;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .compact-status {
+            margin-top: 8px;
+            font-size: 13px;
+        }
+
+        .file-list-compact {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .file-list-compact .file-item {
+            padding: 8px;
+            margin-bottom: 6px;
+        }
+
+        .file-list-compact .file-name {
+            font-size: 13px;
+            margin-bottom: 2px;
+        }
+
+        .file-list-compact .file-meta {
+            font-size: 11px;
+            gap: 8px;
+        }
+
+        .file-list-compact .file-type-icon {
+            font-size: 14px;
+            margin-right: 6px;
+        }
+
+        .file-list-compact .file-status {
+            font-size: 10px;
+            padding: 1px 4px;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .container {
                 padding: 10px;
+            }
+
+            .upload-section {
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .file-list-compact {
+                max-height: 200px;
             }
 
             .tabs {
@@ -1078,48 +1288,62 @@
         
         <!-- Upload Tab -->
         <div id="upload-tab" class="tab-content active">
-            <div class="card">
-                <h2 class="card-title">Upload General Ledger Data</h2>
-                
-                <div class="file-upload">
-                    <p><strong>Upload your GL spreadsheet (Excel format)</strong></p>
-                    <p>Supported formats: .xlsx, .xls</p>
-                    <label for="file-input" class="sr-only">Upload GL spreadsheet file</label>
-                    <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
-                    <br>
-                    <div class="flex gap-4 mt-4">
-                        <button id="process-gl-btn" class="btn btn--primary">Process & Analyze GL Data</button>
+            <!-- GL Upload Section -->
+            <div class="upload-section">
+                <div class="upload-left">
+                    <div class="card compact-card">
+                        <h3 class="card-title compact-title">Upload GL Data</h3>
+                        <div class="file-upload compact-upload">
+                            <p><strong>Excel/CSV format</strong></p>
+                            <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
+                            <button id="process-gl-btn" class="btn btn--primary btn--compact mt-2">Process GL Data</button>
+                        </div>
+                        <div id="file-info" class="compact-info hidden">
+                            <div id="file-details"></div>
+                        </div>
                     </div>
                 </div>
 
-                <div id="file-info" class="card mt-4 hidden">
-                    <h3>File Information</h3>
-                    <div id="file-details"></div>
-                </div>
-
-                <!-- Processing Indicator -->
-                <div id="processing-indicator" class="processing-indicator">
-                    <div class="spinner"></div>
-                    <span>Processing...</span>
+                <div class="upload-right">
+                    <div class="card compact-card">
+                        <h3 class="card-title compact-title">Uploaded Excel Files</h3>
+                        <div id="uploaded-gl-files" class="file-list-compact">
+                            <!-- GL files will be listed here -->
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Document Upload -->
-            <div class="card">
-                <h2 class="card-title">Upload Documents</h2>
-                <div class="file-upload" id="docs-dropzone">
-                    <p><strong>Upload supporting documents</strong></p>
-                    <p>Drag & drop files here or click to select</p>
-                    <p>Supported formats: PDF, PNG, JPG, DOCX</p>
-                    <label for="docs-input" class="sr-only">Upload supporting documents</label>
-                    <input type="file" id="docs-input" multiple accept=".pdf,.png,.jpg,.jpeg,.docx" />
-                    <br>
-                    <button id="ingest-docs-btn" class="btn btn--primary mt-4">Ingest Documents</button>
+            <!-- Document Upload Section -->
+            <div class="upload-section">
+                <div class="upload-left">
+                    <div class="card compact-card">
+                        <h3 class="card-title compact-title">Upload Documents</h3>
+                        <div class="file-upload compact-upload" id="docs-dropzone">
+                            <p><strong>PDF, PNG, JPG, DOCX</strong></p>
+                            <input type="file" id="docs-input" multiple accept=".pdf,.png,.jpg,.jpeg,.docx" />
+                            <button id="ingest-docs-btn" class="btn btn--primary btn--compact mt-2">Ingest Documents</button>
+                        </div>
+                        <div id="docs-status" class="compact-status"></div>
+                        <div id="docs-summary" class="compact-status"></div>
+                    </div>
                 </div>
-                <div id="docs-status"></div>
-                <div id="docs-summary"></div>
+
+                <div class="upload-right">
+                    <div class="card compact-card">
+                        <h3 class="card-title compact-title">Uploaded Documents</h3>
+                        <div id="uploaded-documents" class="file-list-compact">
+                            <!-- Documents will be listed here -->
+                        </div>
+                    </div>
+                </div>
             </div>
 
+            <!-- Processing Indicator -->
+            <div id="processing-indicator" class="processing-indicator">
+                <div class="spinner"></div>
+                <span>Processing...</span>
+            </div>
         </div>
 
         <!-- Review Tab -->
@@ -1165,17 +1389,17 @@
                         <table class="data-table" id="gl-table">
                             <thead>
                                 <tr>
-                                    <th>Status</th>
-                                    <th>Account</th>
-                                    <th>Description</th>
-                                    <th>Amount</th>
-                                    <th>Date</th>
-                                    <th>Category</th>
-                                    <th>Vendor</th>
-                                    <th>Linked Docs</th>
+                                    <th class="sortable-header" data-sort="status">Status</th>
+                                    <th class="sortable-header" data-sort="account">Account</th>
+                                    <th class="sortable-header" data-sort="description">Description</th>
+                                    <th class="sortable-header" data-sort="amount">Amount</th>
+                                    <th class="sortable-header" data-sort="date">Date</th>
+                                    <th class="sortable-header" data-sort="category">Category</th>
+                                    <th class="sortable-header" data-sort="vendor">Vendor</th>
+                                    <th class="sortable-header" data-sort="linkedDocs">Linked Docs</th>
                                     <th>Actions</th>
-                                    <th>Approval</th>
-                                    <th>FAR Issue</th>
+                                    <th class="sortable-header" data-sort="approval">Approval</th>
+                                    <th class="sortable-header" data-sort="farIssue">FAR Issue</th>
                                 </tr>
                             </thead>
                             <tbody id="gl-table-body">
@@ -1617,11 +1841,17 @@
             }
             // Always ensure tabs work, regardless of module load success
             setupTabHandlersFallback();
-            
+
             // Add system status indicator
             setTimeout(function() {
                 addSystemStatusIndicator();
             }, 1000);
+
+            // Load uploaded files when page loads
+            setTimeout(function() {
+                loadUploadedFiles();
+                initializeGLTableSorting();
+            }, 500);
             
             // Enhanced GL Processing with backend integration
             const processBtn = document.getElementById('process-gl-btn');
@@ -1653,6 +1883,9 @@
                             alert('Could not process the Excel file locally. Please try again or start the backend.');
                         }
                         
+                        // Refresh uploaded files list
+                        try { await loadGLFiles(); } catch (_) {}
+
                         // Switch to review tab after processing
                         const reviewTab = document.querySelector('[data-tab="review"]');
                         if (reviewTab) {
@@ -1698,6 +1931,8 @@
                         const healthCheck = await fetch('/api/system/health');
                         if (healthCheck.ok) {
                             statusEl.textContent = 'Documents processed successfully (backend integration active).';
+                            // Refresh document files list
+                            try { await loadDocumentFiles(); } catch (_) {}
                         } else {
                             throw new Error('Backend not available');
                         }
@@ -1827,10 +2062,13 @@
         function displayGLDataInTable(glData) {
             const tableBody = document.getElementById('gl-table-body');
             if (!tableBody) return;
-            
+
+            // Store current data for sorting
+            currentGLData = glData;
+
             // Clear existing content
             tableBody.innerHTML = '';
-            
+
             // Display each GL entry
             glData.forEach((entry, index) => {
                 const row = document.createElement('tr');
@@ -2003,9 +2241,213 @@
             // Update basic metrics
             const totalEntries = document.getElementById('total-entries');
             const complianceRate = document.getElementById('compliance-rate');
-            
+
             if (totalEntries) totalEntries.textContent = '0';
             if (complianceRate) complianceRate.textContent = '100%';
+        }
+
+        // Load and display uploaded files
+        async function loadUploadedFiles() {
+            try {
+                // Load GL files
+                await loadGLFiles();
+
+                // Load document files
+                await loadDocumentFiles();
+            } catch (error) {
+                console.error('Error loading uploaded files:', error);
+            }
+        }
+
+        async function loadGLFiles() {
+            try {
+                const response = await fetch('/api/gl/files');
+                const data = await response.json();
+
+                const container = document.getElementById('uploaded-gl-files');
+                if (!container) return;
+
+                if (data.success && data.files && data.files.length > 0) {
+                    container.innerHTML = data.files.map(file => `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <div class="file-name">
+                                    <span class="file-type-icon">📊</span>
+                                    ${escapeHtml(file.filename)}
+                                </div>
+                                <div class="file-meta">
+                                    <span>${formatFileSize(file.size)}</span>
+                                    <span>${formatDate(file.uploadedAt)}</span>
+                                    <span>${file.entryCount} entries</span>
+                                </div>
+                            </div>
+                            <div class="file-actions">
+                                <span class="file-status uploaded">Uploaded</span>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="file-list-empty">No Excel files uploaded yet</div>';
+                }
+            } catch (error) {
+                console.error('Error loading GL files:', error);
+                const container = document.getElementById('uploaded-gl-files');
+                if (container) {
+                    container.innerHTML = '<div class="file-list-empty">Error loading files</div>';
+                }
+            }
+        }
+
+        async function loadDocumentFiles() {
+            try {
+                const response = await fetch('/api/documents/files');
+                const data = await response.json();
+
+                const container = document.getElementById('uploaded-documents');
+                if (!container) return;
+
+                if (data.success && data.files && data.files.length > 0) {
+                    container.innerHTML = data.files.map(file => `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <div class="file-name">
+                                    <span class="file-type-icon">${getFileIcon(file.mime_type)}</span>
+                                    ${escapeHtml(file.filename)}
+                                </div>
+                                <div class="file-meta">
+                                    <span>${formatFileSize(file.meta?.file_size)}</span>
+                                    <span>${formatDate(file.created_at)}</span>
+                                    <span>${file.doc_type || 'Document'}</span>
+                                </div>
+                            </div>
+                            <div class="file-actions">
+                                <span class="file-status ${file.meta?.ocr_status || 'pending'}">${file.meta?.ocr_status || 'Pending'}</span>
+                                ${file.file_url ? `<a href="${file.file_url}" target="_blank" class="btn btn--outline btn--small">View</a>` : ''}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="file-list-empty">No documents uploaded yet</div>';
+                }
+            } catch (error) {
+                console.error('Error loading document files:', error);
+                const container = document.getElementById('uploaded-documents');
+                if (container) {
+                    container.innerHTML = '<div class="file-list-empty">Error loading files</div>';
+                }
+            }
+        }
+
+        function getFileIcon(mimeType) {
+            if (!mimeType) return '📄';
+            if (mimeType.includes('pdf')) return '📄';
+            if (mimeType.includes('image')) return '🖼️';
+            if (mimeType.includes('word')) return '📝';
+            return '📄';
+        }
+
+        function formatFileSize(bytes) {
+            if (!bytes) return 'Unknown size';
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return 'Unknown date';
+            try {
+                return new Date(dateString).toLocaleDateString();
+            } catch (e) {
+                return 'Invalid date';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // GL Table Sorting
+        let currentGLData = [];
+        let currentSortColumn = null;
+        let currentSortDirection = 'asc';
+
+        function initializeGLTableSorting() {
+            const headers = document.querySelectorAll('#gl-table .sortable-header');
+            headers.forEach(header => {
+                header.addEventListener('click', function() {
+                    const sortColumn = this.getAttribute('data-sort');
+                    if (currentSortColumn === sortColumn) {
+                        // Toggle direction
+                        currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        // New column
+                        currentSortColumn = sortColumn;
+                        currentSortDirection = 'asc';
+                    }
+
+                    updateHeaderSortIndicators();
+                    sortAndDisplayGLData();
+                });
+            });
+        }
+
+        function updateHeaderSortIndicators() {
+            const headers = document.querySelectorAll('#gl-table .sortable-header');
+            headers.forEach(header => {
+                header.classList.remove('sorted-asc', 'sorted-desc');
+                if (header.getAttribute('data-sort') === currentSortColumn) {
+                    header.classList.add(currentSortDirection === 'asc' ? 'sorted-asc' : 'sorted-desc');
+                }
+            });
+        }
+
+        function sortAndDisplayGLData() {
+            if (!currentGLData.length) return;
+
+            const sortedData = [...currentGLData].sort((a, b) => {
+                let aVal = getColumnValue(a, currentSortColumn);
+                let bVal = getColumnValue(b, currentSortColumn);
+
+                // Handle different data types
+                if (currentSortColumn === 'amount') {
+                    aVal = parseFloat(aVal) || 0;
+                    bVal = parseFloat(bVal) || 0;
+                } else if (currentSortColumn === 'date') {
+                    aVal = new Date(aVal || '1900-01-01');
+                    bVal = new Date(bVal || '1900-01-01');
+                } else if (currentSortColumn === 'linkedDocs') {
+                    aVal = parseInt(aVal) || 0;
+                    bVal = parseInt(bVal) || 0;
+                } else {
+                    // String comparison
+                    aVal = String(aVal || '').toLowerCase();
+                    bVal = String(bVal || '').toLowerCase();
+                }
+
+                if (aVal < bVal) return currentSortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return currentSortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            displayGLDataInTable(sortedData);
+        }
+
+        function getColumnValue(entry, column) {
+            switch (column) {
+                case 'status': return entry.status || 'pending';
+                case 'account': return entry.account || entry.accountNumber || '';
+                case 'description': return entry.description || '';
+                case 'amount': return entry.amount || entry.value || 0;
+                case 'date': return entry.date || '';
+                case 'category': return entry.category || '';
+                case 'vendor': return entry.vendor || '';
+                case 'linkedDocs': return entry.linkedDocuments ? entry.linkedDocuments.length : 0;
+                case 'approval': return entry.approved ? 'approved' : 'pending';
+                case 'farIssue': return entry.farIssue ? 'issue' : 'ok';
+                default: return '';
+            }
         }
     </script>
     
