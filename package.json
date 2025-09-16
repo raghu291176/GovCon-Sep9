@@ -10,6 +10,7 @@
     "cleanup": "node scripts/startup-cleanup.js",
     "dev": "nodemon backend/server.js",
     "dev:no-clean": "CLEAN_ON_START=false nodemon backend/server.js",
+    "postinstall": "npm rebuild better-sqlite3 || true",
     "audit": "npm audit --omit=dev",
     "audit:ci": "npm audit --omit=dev --audit-level=high",
     "audit:fix": "npm audit fix --omit=dev || true"
@@ -33,10 +34,8 @@
     "date-fns": "^3.6.0",
     "currency.js": "^2.0.4",
     "sharp": "^0.33.1",
-    "tesseract.js": "^4.1.4"
-  },
-  "optionalDependencies": {
-    "better-sqlite3": "11.0.0"
+    "tesseract.js": "^4.1.4",
+    "better-sqlite3": "^11.0.0"
   },
   "config": {
     "unsafe-perm": true
