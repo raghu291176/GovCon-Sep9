@@ -2035,13 +2035,24 @@ app.put('/api/di-config', express.json(), (req, res) => {
 // ---------- Admin: Clear Data ----------
 function safeClearUploadsDir() {
   try {
+    console.log(`🗑️ Clearing uploads directory: ${UPLOAD_DIR}`);
     const entries = fs.readdirSync(UPLOAD_DIR, { withFileTypes: true });
+    console.log(`📁 Found ${entries.length} entries to delete:`, entries.map(e => e.name));
+
     for (const ent of entries) {
       // Only remove subfolders/files; keep UPLOAD_DIR itself mounted
       const p = path.join(UPLOAD_DIR, ent.name);
-      try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) {}
+      try {
+        fs.rmSync(p, { recursive: true, force: true });
+        console.log(`✅ Deleted: ${ent.name}`);
+      } catch (e) {
+        console.error(`❌ Failed to delete ${ent.name}:`, e.message);
+      }
     }
-  } catch (_) {}
+    console.log('🎉 Upload directory clearing completed');
+  } catch (e) {
+    console.error('❌ Error in safeClearUploadsDir:', e.message);
+  }
 }
 
 app.delete('/api/admin/clear-gl', (req, res) => {
@@ -2080,12 +2091,25 @@ app.delete('/api/admin/clear-docs', (req, res) => {
 
 app.delete('/api/admin/clear-all', (req, res) => {
   try {
+    console.log('🗑️ Starting clear-all operation');
+
+    // Clear memory data
+    console.log('📊 Clearing memory data structures');
     memory.glEntries = [];
     memory.documents = [];
     memory.docItems = [];
     memory.glDocLinks = [];
+
+    // Clear uploaded files
+    console.log('📁 Clearing uploaded files');
     safeClearUploadsDir();
+
+    // Recompute flags
+    console.log('🔄 Recomputing attachment flags');
     recomputeAttachmentFlags();
+
+    // Clear database tables
+    console.log('🗄️ Clearing database tables');
     try {
       if (sqlite?.db) {
         sqlite.db.exec([
@@ -2095,10 +2119,23 @@ app.delete('/api/admin/clear-all', (req, res) => {
           'DELETE FROM documents;',
           'DELETE FROM gl_entries;'
         ].join('\n'));
+        console.log('✅ Database tables cleared successfully');
+      } else {
+        console.log('⚠️ No database connection available');
       }
-    } catch (_) {}
-    res.json({ ok: true, cleared: ['gl_entries', 'documents', 'doc_items', 'document_approvals', 'gl_doc_links', 'uploads'] });
+    } catch (dbError) {
+      console.error('❌ Database clearing error:', dbError.message);
+      // Don't fail the entire operation if database clearing fails
+    }
+
+    console.log('🎉 Clear-all operation completed successfully');
+    res.json({
+      ok: true,
+      cleared: ['gl_entries', 'documents', 'doc_items', 'document_approvals', 'gl_doc_links', 'uploads'],
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
+    console.error('❌ Clear-all operation failed:', e.message);
     res.status(500).json({ error: e.message || 'Failed to clear all data' });
   }
 });
