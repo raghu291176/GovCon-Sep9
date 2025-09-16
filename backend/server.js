@@ -5,18 +5,15 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-// import pdfParse from 'pdf-parse'; // Temporarily disabled due to module issues
 import mammoth from 'mammoth';
 import { classifyByText, extractApprovalsFromText } from './services/approvals.js';
-import { logger, LogLevel, LogCategory, getLogs, getLogAnalytics, clearOldLogs, getSystemHealth, subscribeLogs } from './services/logService.js';
+import { logger, LogCategory, getLogs, getLogAnalytics, clearOldLogs, getSystemHealth, subscribeLogs } from './services/logService.js';
 import { scoreMatch, hasUnallowableKeyword } from './services/match.js';
 import { setupSQLite } from './persistence/sqlite.js';
 import { loadAllConfigs as loadFileConfigs, saveConfig as saveFileConfig } from './persistence/fileStore.js';
 import documentRoutes from './routes/documentRoutes.js';
 import { processDocumentWorkflow } from './services/documentWorkflow.js';
 import { normalizeSpreadsheet } from './services/spreadsheetNormalizer.js';
-// Content Understanding service replaced with Document Intelligence
-// import { initializeAnalyzers } from './services/contentUnderstandingService.js';
 import { httpLogger } from './middleware/httpLogger.js';
 import { performStartupCleanup } from '../scripts/startup-cleanup.js';
 
@@ -1668,10 +1665,6 @@ app.post('/api/logs', (req, res) => {
   }
 });
 
-// Content Understanding analyzers initialization removed - using Document Intelligence now
-// initializeAnalyzers().catch(err => {
-//   console.warn('Content Understanding analyzers initialization failed (service may have limited functionality):', err.message);
-// });
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`API listening on 0.0.0.0:${port}`);

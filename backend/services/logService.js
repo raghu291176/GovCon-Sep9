@@ -299,14 +299,6 @@ export function getSystemHealth() {
   };
 
   const services = {
-    content_understanding: {
-      endpoint: process.env.CONTENT_UNDERSTANDING_ENDPOINT ? 'configured' : 'not_configured',
-      key: process.env.CONTENT_UNDERSTANDING_KEY ? 'configured' : 'not_configured',
-      receipt_analyzer: process.env.CONTENT_UNDERSTANDING_RECEIPT_ANALYZER_ID ? 'configured' : 'not_configured',
-      invoice_analyzer: process.env.CONTENT_UNDERSTANDING_INVOICE_ANALYZER_ID ? 'configured' : 'not_configured',
-      api_version: process.env.CONTENT_UNDERSTANDING_API_VERSION || 'unset',
-      processing_location: process.env.CONTENT_UNDERSTANDING_PROCESSING_LOCATION ? 'set' : 'unset'
-    },
     azure_openai: {
       endpoint: process.env.AZURE_OPENAI_ENDPOINT ? 'configured' : 'not_configured',
       key: process.env.OPENAI_API_KEY ? 'configured' : 'not_configured',

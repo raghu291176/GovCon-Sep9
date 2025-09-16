@@ -1929,16 +1929,23 @@
                     try {
                         // Check if backend is available for document processing
                         const healthCheck = await fetch('/api/system/health');
-                        if (healthCheck.ok) {
+                        if (healthCheck.ok && window.app && window.app.apiBaseUrl) {
+                            // Use the proper document upload function from the app
+                            const files = Array.from(docsInput.files);
+                            await window.app.ingestDocuments(files);
                             statusEl.textContent = 'Documents processed successfully (backend integration active).';
                             // Refresh document files list
-                            try { await loadDocumentFiles(); } catch (_) {}
+                            try {
+                                await window.app.refreshDocsSummary();
+                                await window.app.renderDocumentTable();
+                            } catch (_) {}
                         } else {
-                            throw new Error('Backend not available');
+                            throw new Error('Backend not available or app not initialized');
                         }
                     } catch (error) {
+                        console.error('Document upload error:', error);
                         if (statusEl) {
-                            statusEl.textContent = 'Documents noted (backend features unavailable for full processing).';
+                            statusEl.textContent = `Documents noted (backend features unavailable: ${error.message}).`;
                         }
                     }
                 });

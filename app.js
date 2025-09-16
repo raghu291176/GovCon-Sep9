@@ -203,6 +203,7 @@ class FARComplianceApp {
         console.log('Loading existing GL data from server...');
         const result = await fetchGLEntries(this.apiBaseUrl, 1000, 0);
         if (result && Array.isArray(result.rows) && result.rows.length > 0) {
+          console.log(`📊 Found ${result.rows.length} GL entries on server, loading...`);
           this.glData = result.rows.map(row => ({
             id: row.id,
             accountNumber: row.account_number,
@@ -223,11 +224,20 @@ class FARComplianceApp {
           }));
           console.log(`Loaded ${this.glData.length} existing GL entries from server`);
           this.logPerformance('Load Existing GL Data', perfStart, `${this.glData.length} rows`);
-          
+
           // Run initial audit if FAR rules are loaded
           if (this.farRules && this.farRules.length > 0) {
             this.runInitialAudit();
           }
+        } else {
+          // No data on server - preserve local data if it exists
+          const localDataCount = this.glData?.length || 0;
+          if (localDataCount > 0) {
+            console.log(`📋 Server has no GL data, preserving ${localDataCount} local entries`);
+          } else {
+            console.log('📋 No GL data found on server or locally');
+          }
+          this.logPerformance('Load Existing GL Data', perfStart, `${localDataCount} local rows preserved`);
         }
       }
     } catch (e) {
@@ -1479,7 +1489,7 @@ class FARComplianceApp {
     return mapping;
   }
 
-  prepareMappingUI(aoa) {
+  prepareMappingUI() {
     // Implementation would be here - omitted for brevity
     alert('Manual mapping UI would be shown here');
   }
@@ -1897,7 +1907,7 @@ class FARComplianceApp {
     const perfStart = Date.now();
     try {
       await this.refreshDocsView(5000); // throttle to <5s between fetches
-      await this.setupDocumentFilters();
+      this.setupDocumentFilters();
       this.logPerformance('Load Document Review', perfStart);
     } catch (error) {
       console.error('Error loading document review:', error);
@@ -2263,7 +2273,6 @@ class FARComplianceApp {
     }
 
     try {
-      const originalText = btn ? btn.textContent : '';
       if (btn) btn.textContent = 'Processing OCR...';
       if (statusHint) {
         statusHint.textContent = 'Running Tesseract OCR on all uploaded documents...';
@@ -2582,13 +2591,6 @@ class FARComplianceApp {
   truncateText(text, maxLength) {
     if (!text) return '';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
-  }
-
-  formatFileSize(bytes) {
-    if (!bytes) return '0 B';
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
   }
 
   isImageFile(filename) {

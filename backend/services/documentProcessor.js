@@ -30,11 +30,11 @@ async function processDocument(imageBuffer, tesseractResult, options = {}) {
         
         console.log(`Document classified as: ${classification.documentType} (confidence: ${classification.confidence})`);
         
-        // Step 2: Process based on classification using Content Understanding
+        // Step 2: Process based on classification using Document Intelligence
         let result;
         // Routing rules:
-        // - Invoice -> Content Understanding Invoice analyzer
-        // - Receipt -> Content Understanding Receipt analyzer
+        // - Invoice -> Document Intelligence Invoice processing
+        // - Receipt -> Document Intelligence Receipt processing
         // - Other -> If Tesseract failed (low text/conf), use Mistral; else extract via regex from OCR text
         const tesseractFailed = isTesseractFailed(tesseractResult);
         const isPDF = options.fileType && /pdf/i.test(options.fileType || '');
@@ -92,7 +92,7 @@ async function processDocument(imageBuffer, tesseractResult, options = {}) {
 }
 
 // Note: Image cropping/detections support is deferred. We process the original
-// uploaded image/document as-is with OCR + Content Understanding/Mistral.
+// uploaded image/document as-is with OCR + Document Intelligence/Mistral.
 
 /**
  * Original document processing logic (unchanged for backward compatibility)
@@ -127,9 +127,8 @@ async function processOriginalImage(imageBuffer, extractedText, options = {}) {
     return result;
 }
 
-// Removed: processWithDocumentIntelligenceReceipt - replaced with Content Understanding
-
-// Removed: processWithDocumentIntelligenceInvoice - replaced with Content Understanding
+// Note: processWithDocumentIntelligenceReceipt and processWithDocumentIntelligenceInvoice
+// are now handled by the Document Intelligence service
 
 async function processWithMistralOCR(imageBuffer, options = {}) {
     if (!process.env.AZURE_FOUNDRY_MISTRAL_ENDPOINT || !process.env.AZURE_FOUNDRY_MISTRAL_KEY) {
@@ -198,7 +197,7 @@ async function processWithMistralOCR(imageBuffer, options = {}) {
     }
 }
 
-// Removed: extractReceiptData and extractInvoiceData - Content Understanding handles extraction internally
+// Note: extractReceiptData and extractInvoiceData - Document Intelligence handles extraction internally
 
 function extractMistralData(mistralResponse) {
     try {
@@ -352,7 +351,7 @@ function normalizeMerchant(merchant) {
     return { value: cleanMerchant, confidence: 0.5 }; // Lower confidence for merchant names from OCR
 }
 
-// Removed: calculateConfidence - Content Understanding provides confidence internally
+// Note: calculateConfidence - Document Intelligence provides confidence internally
 
 /**
  * Extract description from OCR text
