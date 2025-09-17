@@ -244,6 +244,24 @@ class FARComplianceApp {
       console.warn('Failed to load existing GL data:', e);
       this.logPerformance('Load Existing GL Data (failed)', perfStart);
     }
+
+    // Synchronize uploaded files list with GL data state
+    this.syncUploadedFilesList();
+  }
+
+  syncUploadedFilesList() {
+    const uploadedGLFiles = document.getElementById("uploaded-gl-files");
+    if (!uploadedGLFiles) return;
+
+    // If there's no GL data, clear the uploaded files list
+    if (!this.glData || this.glData.length === 0) {
+      uploadedGLFiles.innerHTML = `
+        <div class="no-files-message" style="text-align: center; color: #9CA3AF; font-style: italic; padding: 20px;">
+          No Excel files uploaded yet
+        </div>
+      `;
+      console.log('🧹 Cleared uploaded files list - no GL data available');
+    }
   }
 
   async runInitialAudit() {
@@ -1454,6 +1472,10 @@ class FARComplianceApp {
 
       await this.runInitialAudit();
       this.renderGLTable();
+
+      // Move file from Upload GL Data to Uploaded Excel Files section
+      this.moveFileToUploadedList();
+
       this.switchTab("review");
       alert(`✅ Successfully processed ${this.glData.length} GL entries.`);
       this.logPerformance('Excel Processing', perfStart, `${this.glData.length} rows`);
@@ -1464,6 +1486,95 @@ class FARComplianceApp {
     } finally {
       if (processingIndicator) processingIndicator.classList.add("hidden");
     }
+  }
+
+  moveFileToUploadedList() {
+    if (!this.uploadedFile) return;
+
+    const file = this.uploadedFile;
+
+    // Clear the Upload GL Data section
+    this.clearUploadGLDataSection();
+
+    // Add file to Uploaded Excel Files section
+    this.addFileToUploadedExcelFiles(file);
+
+    // Clear the uploaded file reference
+    this.uploadedFile = null;
+  }
+
+  clearUploadGLDataSection() {
+    // Hide file info section
+    const fileInfo = document.getElementById("file-info");
+    if (fileInfo) {
+      fileInfo.classList.add("hidden");
+    }
+
+    // Clear file details
+    const fileDetails = document.getElementById("file-details");
+    if (fileDetails) {
+      fileDetails.innerHTML = '';
+    }
+
+    // Reset file input
+    const fileInput = document.getElementById("gl-input");
+    if (fileInput) {
+      fileInput.value = '';
+    }
+  }
+
+  addFileToUploadedExcelFiles(file) {
+    const uploadedGLFiles = document.getElementById("uploaded-gl-files");
+    if (!uploadedGLFiles) return;
+
+    // Remove "No Excel files uploaded yet" message if it exists
+    const noFilesMsg = uploadedGLFiles.querySelector('.no-files-message');
+    if (noFilesMsg) {
+      noFilesMsg.remove();
+    }
+
+    // Create file entry matching the existing style pattern
+    const fileEntry = document.createElement('div');
+    fileEntry.className = 'file-item';
+    fileEntry.innerHTML = `
+      <div class="file-info">
+        <div class="file-name">
+          <span class="file-type-icon">📊</span>
+          ${this.escapeHtml(file.name)}
+        </div>
+        <div class="file-meta">
+          <span>${this.formatFileSize(file.size)}</span>
+          <span>${this.formatDate(new Date())}</span>
+          <span>${this.glData ? this.glData.length : 0} entries</span>
+        </div>
+      </div>
+    `;
+
+    // Add to the beginning of the list
+    uploadedGLFiles.insertBefore(fileEntry, uploadedGLFiles.firstChild);
+  }
+
+  // Helper functions for formatting
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  formatDate(date) {
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
   }
 
   isWeakMapping(data) {
