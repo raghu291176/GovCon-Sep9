@@ -113,7 +113,10 @@ const SYNONYMS = {
     .map(s => s.toLowerCase()),
   vendor: ['vendor', 'vendor name', 'supplier', 'payee', 'merchant']
     .map(s => s.toLowerCase()),
-  contractNumber: ['contract number', 'contract', 'contract #', 'contract#', 'contractno']
+  contractNumber: ['contract number', 'contract', 'contract #', 'contract#', 'contractno', 
+    'contract_number', 'contract_no', 'contract num', 'contract_num', 'contractnum',
+    'contract id', 'contract_id', 'contract identifier', 'job number', 'job_number',
+    'project number', 'project_number', 'award number', 'award_number']
     .map(s => s.toLowerCase()),
 };
 
@@ -224,13 +227,21 @@ function normalizeAmountValue(val) {
   let s = String(val).trim();
   if (!s) return null;
   let negative = false;
-  if (/^\(.+\)$/.test(s)) { negative = true; s = s.slice(1, -1); }
+  
+  // Handle parentheses for negative amounts (including with currency symbols)
+  // Check for patterns like ($123.45), $(123.45), (123.45$), etc.
+  if (/^\(.*\)$/.test(s)) { 
+    negative = true; 
+    s = s.slice(1, -1).trim(); 
+  }
+  
+  // Remove currency symbols and apostrophes/space separators
+  s = s.replace(/[\$€£¥₹₩₽₺¢ CHFUSDINRJPYKRWSEKEURGBP]|[\s\']+/gi, '');
+  
   // Try currency.js tolerant parse by cleaning separators heuristically
   // Detect comma+dot vs single type
   const hasComma = s.includes(',');
   const hasDot = s.includes('.');
-  // Remove currency symbols and apostrophes/space separators
-  s = s.replace(/[\$€£¥₹₩₽₺¢ CHFUSDINRJPYKRWSEKEURGBP]|[\s\']+/gi, '');
   if (hasComma && hasDot) {
     if (s.lastIndexOf(',') > s.lastIndexOf('.')) { s = s.replace(/\./g, ''); s = s.replace(',', '.'); }
     else { s = s.replace(/,/g, ''); }

@@ -46,6 +46,18 @@ export function renderLogDashboard() {
                 </div>
             </div>
 
+            <!-- External API Health Status -->
+            <div class="health-status-section">
+                <h3>🔗 External API Health Status</h3>
+                <div class="health-controls">
+                    <button onclick="refreshHealthStatus()" class="refresh-btn">🔄 Refresh</button>
+                    <button onclick="runFullHealthCheck()" class="health-check-btn">🏥 Run Full Check</button>
+                </div>
+                <div id="health-status-grid" class="health-status-grid">
+                    <div class="health-loading">Loading health status...</div>
+                </div>
+            </div>
+
             <div class="log-charts-row">
                 <div class="chart-container">
                     <h3>Log Levels Distribution</h3>
@@ -171,6 +183,131 @@ export function renderLogDashboard() {
             .metric-subtitle {
                 font-size: 12px;
                 color: #999;
+            }
+
+            /* Health Status Section */
+            .health-status-section {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                margin-bottom: 20px;
+            }
+
+            .health-controls {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 15px;
+            }
+
+            .health-check-btn {
+                background: #17a2b8;
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+
+            .health-check-btn:hover {
+                background: #138496;
+            }
+
+            .health-status-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 15px;
+            }
+
+            .health-service-card {
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                padding: 15px;
+                background: #f8f9fa;
+            }
+
+            .health-service-card.healthy {
+                border-left: 4px solid #28a745;
+                background: #f8fff9;
+            }
+
+            .health-service-card.unhealthy {
+                border-left: 4px solid #dc3545;
+                background: #fff8f8;
+            }
+
+            .health-service-card.not_configured {
+                border-left: 4px solid #6c757d;
+                background: #f6f6f6;
+            }
+
+            .health-service-card.timeout {
+                border-left: 4px solid #ffc107;
+                background: #fffdf5;
+            }
+
+            .health-service-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+            }
+
+            .health-service-name {
+                font-weight: bold;
+                font-size: 16px;
+            }
+
+            .health-status-badge {
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: bold;
+                text-transform: uppercase;
+            }
+
+            .health-status-badge.healthy {
+                background: #d4edda;
+                color: #155724;
+            }
+
+            .health-status-badge.unhealthy {
+                background: #f8d7da;
+                color: #721c24;
+            }
+
+            .health-status-badge.not_configured {
+                background: #e2e3e5;
+                color: #383d41;
+            }
+
+            .health-status-badge.timeout {
+                background: #fff3cd;
+                color: #856404;
+            }
+
+            .health-service-description {
+                color: #666;
+                font-size: 14px;
+                margin-bottom: 10px;
+            }
+
+            .health-service-details {
+                font-size: 12px;
+                color: #888;
+            }
+
+            .health-error {
+                color: #dc3545;
+                font-size: 12px;
+                margin-top: 5px;
+                font-style: italic;
+            }
+
+            .health-loading {
+                text-align: center;
+                padding: 20px;
+                color: #666;
             }
 
             .log-charts-row {
@@ -401,10 +538,79 @@ window.updateSystemHealth = async function() {
         healthElement.textContent = health.status;
         healthElement.className = `metric-value ${health.status.toLowerCase()}`;
         
+        // Also update external API health status
+        refreshHealthStatus();
+        
     } catch (error) {
         console.error('Failed to update system health:', error);
     }
 };
+
+// Health Check Functions
+window.refreshHealthStatus = async function() {
+    try {
+        const response = await fetch('/api/health/status');
+        const healthData = await response.json();
+        renderHealthStatusGrid(healthData.checks || {});
+    } catch (error) {
+        console.error('Failed to refresh health status:', error);
+        const grid = document.getElementById('health-status-grid');
+        if (grid) {
+            grid.innerHTML = '<div class="health-error">Failed to load health status</div>';
+        }
+    }
+};
+
+window.runFullHealthCheck = async function() {
+    const grid = document.getElementById('health-status-grid');
+    if (grid) {
+        grid.innerHTML = '<div class="health-loading">Running health checks...</div>';
+    }
+    
+    try {
+        const response = await fetch('/api/health/external');
+        const healthData = await response.json();
+        renderHealthStatusGrid(healthData.checks || {});
+    } catch (error) {
+        console.error('Failed to run health check:', error);
+        if (grid) {
+            grid.innerHTML = '<div class="health-error">Health check failed: ' + error.message + '</div>';
+        }
+    }
+};
+
+function renderHealthStatusGrid(checks) {
+    const grid = document.getElementById('health-status-grid');
+    if (!grid) return;
+    
+    if (Object.keys(checks).length === 0) {
+        grid.innerHTML = '<div class="health-loading">No health checks configured</div>';
+        return;
+    }
+    
+    const cardsHtml = Object.values(checks).map(check => {
+        const statusClass = check.status || 'unknown';
+        const criticalBadge = check.critical ? '<span style="color: #dc3545; font-weight: bold;">[CRITICAL]</span>' : '';
+        
+        return `
+            <div class="health-service-card ${statusClass}">
+                <div class="health-service-header">
+                    <div class="health-service-name">${check.name} ${criticalBadge}</div>
+                    <div class="health-status-badge ${statusClass}">${check.status}</div>
+                </div>
+                <div class="health-service-description">${check.description || ''}</div>
+                <div class="health-service-details">
+                    ${check.responseTime ? `Response: ${check.responseTime}ms` : ''}
+                    ${check.statusCode ? ` | Status: ${check.statusCode}` : ''}
+                    ${check.timestamp ? ` | Last Check: ${new Date(check.timestamp).toLocaleTimeString()}` : ''}
+                </div>
+                ${check.error ? `<div class="health-error">Error: ${check.error}</div>` : ''}
+            </div>
+        `;
+    }).join('');
+    
+    grid.innerHTML = cardsHtml;
+}
 
 function updateLogLevelsChart(levelCounts) {
     const canvas = document.getElementById('log-levels-chart');

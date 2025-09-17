@@ -8,6 +8,7 @@ import { renderGLTable, filterData } from "./modules/ui/tableView.js";
 import { updateDashboard as updateDashboardUI } from "./modules/ui/dashboard.js";
 import { generateReport as genReport, exportToPDF as exportPDF } from "./modules/reports/reportService.js";
 import { renderLogDashboard, initializeLogDashboard, destroyLogDashboard } from "./modules/ui/logDashboard.js";
+import { debugLogger } from "./modules/utils/debugLogger.js";
 
 import {
   saveGLEntries,
@@ -62,6 +63,7 @@ class FARComplianceApp {
     this.docs = {
       files: [],
       items: [],
+      documents: [],
       links: [],
       summaryEl: null,
       statusEl: null
@@ -287,16 +289,16 @@ class FARComplianceApp {
   }
 
   setupEventListeners() {
-    console.log('🔗 Setting up event listeners...');
+    debugLogger.log('🔗 Setting up event listeners...');
 
     const bindEvent = (elementId, eventType, handler, description) => {
       const element = document.getElementById(elementId);
       if (!element) {
-        console.warn(`⚠️ Element not found: ${elementId}`);
+        debugLogger.warn(`⚠️ Element not found: ${elementId}`);
         return false;
       }
       if (element.dataset.bound === 'true') {
-        console.log(`ℹ️ Event already bound: ${elementId} ${eventType}`);
+        debugLogger.log(`ℹ️ Event already bound: ${elementId} ${eventType}`);
         return true;
       }
       element.addEventListener(eventType, (e) => {
@@ -639,9 +641,20 @@ class FARComplianceApp {
           if (path.includes('clear-gl') || path.includes('clear-all')) {
             self.glData = [];
             self.auditResults = [];
+            self.uploadedFile = null;
+            // Clear the GL file input
+            const glFileInput = document.getElementById('file-input');
+            if (glFileInput) {
+              glFileInput.value = '';
+            }
           }
           if (path.includes('clear-docs') || path.includes('clear-all')) {
             self.docs = { ...self.docs, items: [], links: [], documents: [] };
+            // Clear the documents file input
+            const docsFileInput = document.getElementById('docs-input');
+            if (docsFileInput) {
+              docsFileInput.value = '';
+            }
           }
           
           await self.refreshDocsSummary();
@@ -2517,14 +2530,14 @@ class FARComplianceApp {
   }
 
   debugDocuments() {
-    console.log('🐛 DEBUG: Document Review State');
-    console.log('API Base URL:', this.apiBaseUrl);
-    console.log('Documents:', this.docs.documents);
-    console.log('Document Items:', this.docs.items);
-    console.log('Links:', this.docs.links);
-    console.log('Current Tab Active:', document.querySelector('#review-tab.active') ? 'YES' : 'NO');
-    console.log('Current Subtab Active:', document.querySelector('#doc-review-subtab.active') ? 'YES' : 'NO');
-    console.log('Table Body Element:', document.getElementById('documents-table-body'));
+    debugLogger.debug('🐛 DEBUG: Document Review State');
+    debugLogger.debug('API Base URL:', this.apiBaseUrl);
+    debugLogger.debug('Documents:', this.docs.documents);
+    debugLogger.debug('Document Items:', this.docs.items);
+    debugLogger.debug('Links:', this.docs.links);
+    debugLogger.debug('Current Tab Active:', document.querySelector('#review-tab.active') ? 'YES' : 'NO');
+    debugLogger.debug('Current Subtab Active:', document.querySelector('#doc-review-subtab.active') ? 'YES' : 'NO');
+    debugLogger.debug('Table Body Element:', document.getElementById('documents-table-body'));
 
     const debugInfo = {
       apiBaseUrl: this.apiBaseUrl,
@@ -2537,8 +2550,12 @@ class FARComplianceApp {
       sampleDocument: this.docs.documents[0] || null
     };
 
-    alert('Debug info logged to console. Check browser console for details.');
-    console.table(debugInfo);
+    if (debugLogger.enabled) {
+      alert('Debug info logged to console. Check browser console for details.');
+      console.table(debugInfo);
+    } else {
+      alert('Debug mode is disabled. To enable, add ?debug to URL or run debugLogger.enable() in console.');
+    }
   }
 
   async viewDocument(docId) {

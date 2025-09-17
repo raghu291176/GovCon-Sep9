@@ -182,13 +182,39 @@ async function reEvaluateWithGPT4o(glItem, linkedDocs, currentAudit, farRules, o
       farIssue: currentAudit.farIssue,
       farSection: currentAudit.farSection
     },
-    attachedDocuments: linkedDocs.map(({ document, docItem }) => ({
-      filename: document.filename,
-      documentType: document.doc_type,
-      textContent: document.text_content,
-      extractedData: docItem,
-      confidence: docItem.confidence
-    })),
+    attachedDocuments: linkedDocs.map(({ document, docItem }) => {
+      // Extract raw OCR data from document
+      let rawOcrText = null;
+      let ocrData = null;
+      
+      // Try to get raw OCR text from document text_content if it contains OCR extracted data
+      if (document.text_content && document.text_content.startsWith('OCR extracted data:')) {
+        try {
+          const jsonStr = document.text_content.replace('OCR extracted data: ', '');
+          const extractedJson = JSON.parse(jsonStr);
+          // Look for raw text in various possible locations
+          rawOcrText = extractedJson.rawText || extractedJson.raw_text || extractedJson.ocrText || extractedJson.rawOcrText || null;
+        } catch (e) {
+          console.warn('Failed to parse OCR extracted data:', e);
+        }
+      }
+      
+      // Also check if there's OCR data in document meta
+      if (document.meta && document.meta.ocr_data) {
+        ocrData = document.meta.ocr_data;
+        rawOcrText = rawOcrText || ocrData.raw_text || ocrData.rawText;
+      }
+      
+      return {
+        filename: document.filename,
+        documentType: document.doc_type,
+        textContent: document.text_content,
+        rawOcrText: rawOcrText, // Include raw OCR text for GPT-4o analysis
+        ocrData: ocrData, // Include structured OCR data
+        extractedData: docItem,
+        confidence: docItem.confidence
+      };
+    }),
     farRules: farRules.map(rule => ({
       title: rule.title,
       section: rule.section,
@@ -197,34 +223,65 @@ async function reEvaluateWithGPT4o(glItem, linkedDocs, currentAudit, farRules, o
     }))
   };
 
-  const systemPrompt = `You are a Federal Acquisition Regulation (FAR) compliance auditor. Your task is to re-evaluate the compliance status of a GL entry considering ALL attached documents and their approval information.
+  const systemPrompt = `You are an audit assistant evaluating federal contract transactions for compliance.
+For each transaction, you receive:
 
-Current status meanings:
-- RED: Expressly unallowable per FAR
-- YELLOW: Limited allowable per FAR (may require additional justification)
-- GREEN: Compliant/allowable
+General Ledger (GL) line item data
 
-Your re-evaluation should consider:
-1. The original FAR rule-based assessment
-2. Any approval documentation in attached files
-3. Whether approvals address the compliance concerns
-4. The completeness and authority of approvals
+Extracted text from receipts via OCR
+
+Evaluate each transaction according to the Federal Acquisition Regulation (FAR) requirements for documentation and payment.
+
+Please assign one rating:
+
+Green if compliant and all details match
+
+Yellow for minor inconsistencies, incomplete information, or unclear evidence
+
+Red for major issues: missing receipts, obvious inaccuracies, or potential fraud
+
+For each transaction, check:
+
+Do the GL amount, vendor, date, and description match those on the receipt text?
+
+Is the receipt clear, complete, and legible based on OCR results?
+
+Does the receipt show legitimate purchase, correct approval, and required details (vendor name, amount, date)?
+
+Is any key information (amount, date, vendor, or approval markers) missing or flagged by OCR?
+
+Output for each transaction:
+
+Compliance rating (Green/Yellow/Red)
+
+Short justification referencing specific GL and receipt information or discrepancies
 
 Return ONLY a JSON object with:
 {
   "status": "RED|YELLOW|GREEN",
   "farIssue": "description of the issue or 'Compliant'",
   "farSection": "relevant FAR section or empty string",
-  "reasoning": "brief explanation of the re-evaluation decision",
+  "reasoning": "brief explanation of the evaluation decision",
   "approvalsFound": true/false,
   "approvalSummary": "summary of approvals found"
 }`;
 
-  const userPrompt = `Please re-evaluate this GL entry:
+  const userPrompt = `Please evaluate this GL transaction:
 
-${JSON.stringify(context, null, 2)}
+GL Line: {Vendor: ${context.glItem.vendor || 'N/A'}, Date: ${context.glItem.date || 'N/A'}, Amount: $${context.glItem.amount || 'N/A'}, Description: ${context.glItem.description || 'N/A'}}
 
-Consider whether the attached documents contain approvals that address any FAR compliance concerns. Approvals from appropriate authorities may change RED to YELLOW/GREEN or YELLOW to GREEN, but only if they specifically address the compliance issue and come from authorized personnel.`;
+Receipt OCR Data: ${JSON.stringify(context.attachedDocuments.map(doc => ({
+  Filename: doc.filename,
+  ExtractedData: {
+    Vendor: doc.extractedData?.vendor || 'N/A',
+    Date: doc.extractedData?.date || 'N/A', 
+    Amount: doc.extractedData?.amount || 'N/A'
+  },
+  RawOCRText: doc.rawOcrText || 'No raw OCR text available',
+  ProcessedText: doc.textContent || 'No processed text available'
+})), null, 2)}
+
+What is the compliance rating and why? Compare the GL data with both the extracted structured data and the raw OCR text from the receipt. Check if amounts, vendors, dates, and descriptions match. Verify if the receipt is clear, complete, and shows legitimate purchase with required details.`;
 
   try {
     const response = await azureChat([

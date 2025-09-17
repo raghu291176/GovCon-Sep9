@@ -27,32 +27,22 @@ const upload = multer({
 });
 
 async function getGLEntries(req) {
-    return [
-        {
-            id: 'GL-001',
-            amount: 123.45,
-            date: '2024-03-15',
-            vendor: 'ABC Store',
-            description: 'Office supplies',
-            account: '6000-Office Expenses'
-        },
-        {
-            id: 'GL-002',
-            amount: 456.78,
-            date: '2024-03-16',
-            vendor: 'Tech Solutions Inc',
-            description: 'Software license',
-            account: '6100-Software'
-        },
-        {
-            id: 'GL-003',
-            amount: 89.99,
-            date: '2024-03-17',
-            vendor: 'Restaurant Supply Co',
-            description: 'Business meal',
-            account: '6200-Meals & Entertainment'
-        }
-    ];
+    // Access the memory object from the app instance
+    const memory = req.app.locals.memory;
+    
+    if (!memory || !Array.isArray(memory.glEntries)) {
+        return [];
+    }
+    
+    // Return GL entries from memory with proper formatting
+    return memory.glEntries.map(entry => ({
+        id: entry.id,
+        amount: entry.amount,
+        date: entry.date,
+        vendor: entry.vendor,
+        description: entry.description,
+        account: entry.account_number
+    }));
 }
 
 router.post('/process-document', upload.single('document'), async (req, res) => {

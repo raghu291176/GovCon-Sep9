@@ -15,6 +15,9 @@ import documentRoutes from './routes/documentRoutes.js';
 import { processDocumentWorkflow } from './services/documentWorkflow.js';
 import { normalizeSpreadsheet } from './services/spreadsheetNormalizer.js';
 import { httpLogger } from './middleware/httpLogger.js';
+import { validateRequest, validateQuery, validateParams, schemas } from './middleware/validation.js';
+import { rateLimit } from './middleware/rateLimiter.js';
+import { healthCheckService } from './services/healthCheck.js';
 import { performStartupCleanup } from '../scripts/startup-cleanup.js';
 
 // Perform startup cleanup on service restart
@@ -35,6 +38,17 @@ const ROOT_DIR = path.join(__dirname, '..');
 app.use(express.json({ limit: '10mb' }));
 // HTTP request logging (inspired by morgan) – redacts sensitive headers
 app.use(httpLogger());
+
+// In-memory storage (no database)
+const memory = {
+  glEntries: [], // { id, account_number, description, amount, date, category, vendor, contract_number, created_at, doc_summary, doc_flag_unallowable }
+  appConfig: {}, // free-form config from /api/config
+  llm: {},       // llm config from /api/llm-config
+  documents: [], // { id, filename, mime_type, text_content, meta, created_at, doc_type, approvals: [] }
+  docItems: [],  // { id, document_id, kind, vendor, date, amount, currency, details, text_excerpt }
+  glDocLinks: [],// { document_item_id, gl_entry_id, score, doc_summary, doc_flag_unallowable }
+  di: {},        // Azure Document Intelligence config
+};
 
 // Robust amount parser for server-side GL ingestion
 function parseAmountLoose(val) {
@@ -163,6 +177,9 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'index.html'));
 });
 
+// Make memory object available to routes
+app.locals.memory = memory;
+
 // Document processing routes
 app.use('/api/document-processing', documentRoutes);
 // Serve uploaded documents (receipts) for preview — prefer persistent storage
@@ -180,17 +197,6 @@ app.use('/uploads', express.static(UPLOAD_DIR));
 const apiVersion = "2024-04-01-preview";
 const modelName = "gpt-4o";
 const deployment = "gpt-4o";
-
-// In-memory storage (no database)
-const memory = {
-  glEntries: [], // { id, account_number, description, amount, date, category, vendor, contract_number, created_at, doc_summary, doc_flag_unallowable }
-  appConfig: {}, // free-form config from /api/config
-  llm: {},       // llm config from /api/llm-config
-  documents: [], // { id, filename, mime_type, text_content, meta, created_at, doc_type, approvals: [] }
-  docItems: [],  // { id, document_id, kind, vendor, date, amount, currency, details, text_excerpt }
-  glDocLinks: [],// { document_item_id, gl_entry_id, score, doc_summary, doc_flag_unallowable }
-  di: {},        // Azure Document Intelligence config
-};
 
 // Optional SQLite persistence (loads existing state into memory)
 console.log('🗄️ Initializing SQLite persistence...');
@@ -269,10 +275,69 @@ app.get('/api/health', async (req, res) => {
   res.json({ ok: true, counts: { gl: memory.glEntries.length, docs: memory.documents.length } });
 });
 
+// External API health checks
+app.get('/api/health/external', async (req, res) => {
+  try {
+    const results = await healthCheckService.runAllChecks();
+    const systemStatus = healthCheckService.getSystemStatus();
+    res.json({
+      status: systemStatus.status,
+      timestamp: systemStatus.timestamp,
+      checks: results,
+      summary: systemStatus.summary
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Get cached health check results
+app.get('/api/health/status', (req, res) => {
+  const systemStatus = healthCheckService.getSystemStatus();
+  res.json(systemStatus);
+});
+
+// Trigger health check for specific service
+app.post('/api/health/check/:service', async (req, res) => {
+  try {
+    const { service } = req.params;
+    const result = await healthCheckService.runSingleCheck(service);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Persist GL entries (expects { entries: [...] })
-app.post('/api/gl', async (req, res) => {
-  const entries = req.body?.entries;
-  if (!Array.isArray(entries)) return res.status(400).json({ error: 'entries must be an array' });
+app.post('/api/gl', validateRequest({
+  entries: {
+    type: 'isArray',
+    required: true,
+    arrayMaxLength: 1000,
+    validate: (value) => {
+      if (!Array.isArray(value)) return 'entries must be an array';
+      if (value.length === 0) return 'entries array cannot be empty';
+      for (let i = 0; i < value.length; i++) {
+        const entry = value[i];
+        if (!entry.description || typeof entry.description !== 'string') {
+          return `Entry ${i} must have a valid description`;
+        }
+        if (entry.amount === undefined || isNaN(parseFloat(entry.amount))) {
+          return `Entry ${i} must have a valid amount`;
+        }
+      }
+      return true;
+    }
+  }
+}), async (req, res) => {
+  const entries = req.body.entries;
   try {
     const ids = [];
     for (const e of entries) {
@@ -322,9 +387,15 @@ app.post('/api/gl', async (req, res) => {
 });
 
 // Delete GL entry by ID
-app.delete('/api/gl/:id', async (req, res) => {
+app.delete('/api/gl/:id', validateParams({
+  id: {
+    type: 'isString',
+    required: true,
+    maxLength: 100,
+    sanitize: ['toString', 'escapeHtml']
+  }
+}), async (req, res) => {
   const { id } = req.params;
-  if (!id) return res.status(400).json({ error: 'ID is required' });
   
   try {
     const initialCount = memory.glEntries.length;
@@ -365,7 +436,7 @@ app.delete('/api/gl', async (req, res) => {
 });
 
 // Fetch GL entries (basic pagination)
-app.get('/api/gl', async (req, res) => {
+app.get('/api/gl', validateQuery(schemas.pagination), async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 100, 1000);
   const offset = Number(req.query.offset) || 0;
   try {
@@ -538,14 +609,41 @@ async function callOpenAICompatible(rows) {
   const systemMsg = {
     role: 'system',
     content: [
-      'You are a compliance assistant for FAR cost allowability. You will receive a JSON object with an array "rows". Each row may include:',
-      'index (0-based), id (unique string), accountNumber, description, amount, date (YYYY-MM-DD), category, vendor, contractNumber, attachmentsCount (integer), hasReceipt (boolean), and attachments (array).',
+      'You are an audit assistant evaluating federal contract transactions for compliance.',
+      'For each transaction, you receive:',
       '',
-      'attachments array contains items with fields: { documentItemId, documentId, filename, mimeType, ocr: { amount, date, vendor, confidence }, processingMethod }.',
-      'Use attached OCR fields (amount/date/vendor) to corroborate allowability and receipt presence/adequacy. Prefer exact OCR fields over description hints when present.',
+      'General Ledger (GL) line item data',
+      '',
+      'Extracted text from receipts via OCR',
+      '',
+      'Evaluate each transaction according to the Federal Acquisition Regulation (FAR) requirements for documentation and payment.',
+      '',
+      'Please assign one rating:',
+      '',
+      'Green if compliant and all details match',
+      '',
+      'Yellow for minor inconsistencies, incomplete information, or unclear evidence',
+      '',
+      'Red for major issues: missing receipts, obvious inaccuracies, or potential fraud',
+      '',
+      'For each transaction, check:',
+      '',
+      'Do the GL amount, vendor, date, and description match those on the receipt text?',
+      '',
+      'Is the receipt clear, complete, and legible based on OCR results?',
+      '',
+      'Does the receipt show legitimate purchase, correct approval, and required details (vendor name, amount, date)?',
+      '',
+      'Is any key information (amount, date, vendor, or approval markers) missing or flagged by OCR?',
+      '',
+      'Output for each transaction:',
+      '',
+      'Compliance rating (Green/Yellow/Red)',
+      '',
+      'Short justification referencing specific GL and receipt information or discrepancies',
       '',
       'Return exactly one top-level JSON object and nothing else (no prose, no markdown, no code fences). Schema:',
-      '{"results":[{"index":0,"id":"<same as input id>","classification":"ALLOWED|UNALLOWABLE|NEEDS_REVIEW|RECEIPT_REQUIRED","rationale":"…","farSection":"31.xxx or \"\""}]}',
+      '{"results":[{"index":0,"id":"<same as input id>","classification":"GREEN|YELLOW|RED","rationale":"…","farSection":"31.xxx or \"\""}]}',
       '',
       'Hard rules:',
       '- Output strictly JSON only (no prose/markdown/fences).',
@@ -553,22 +651,10 @@ async function callOpenAICompatible(rows) {
       '- Copy both index and id from each input row (if id present).',
       '- rationale ≤160 chars, factual, tied to the row.',
       '- farSection only when clearly applicable; else "".',
-      '- If insufficient/ambiguous → NEEDS_REVIEW.',
-      '- If travel/lodging/meals/airfare (or large purchases) lack receipts → RECEIPT_REQUIRED.',
-      '- Amount ≥3000 and attachmentsCount==0 → RECEIPT_REQUIRED.',
-      '',
-      'Decision logic (first match wins):',
-      '- Alcohol → UNALLOWABLE ("31.205-51").',
-      '- Lobbying/political → UNALLOWABLE ("31.205-22").',
-      '- Donations/charity → UNALLOWABLE ("31.205-8").',
-      '- Fines/penalties → UNALLOWABLE ("31.205-15").',
-      '- Interest/bank/finance fees → UNALLOWABLE ("31.205-20").',
-      '- Entertainment/gifts/PR/morale → UNALLOWABLE ("31.205-14").',
-      '- Airfare above coach (first/business/premium/seat upgrade) without clear justification → UNALLOWABLE (excess) ("31.205-46").',
-      '- Travel/lodging/meals/airfare missing receipts/support → RECEIPT_REQUIRED (cite "31.205-46" only if clearly applicable).',
-      '- Ordinary office/admin supplies, utilities/telecom, necessary software/cloud clearly allocable & reasonable → ALLOWED ("31.201-2").',
-      '- Legal/professional/claims/litigation unclear → NEEDS_REVIEW unless a specific section applies.',
-      '- Direct travel to client/government site with null contractNumber and allocability unclear → NEEDS_REVIEW.',
+      '- Compare GL data (amount, vendor, date, description) with OCR extracted data.',
+      '- GREEN: All details match and receipt is clear/complete.',
+      '- YELLOW: Minor inconsistencies or incomplete information.',
+      '- RED: Major issues like missing receipts, obvious inaccuracies, or potential fraud.',
     ].join('\n')
   };
   // Helper: collect attachments for a given GL row id
@@ -603,7 +689,9 @@ async function callOpenAICompatible(rows) {
             confidence: item?.details?.confidence || doc?.meta?.confidence || null
           },
           // Full extraction payload (contains fields like description, summary, tax, alcohol indicators, etc.)
-          ocrFull: ocrFull
+          ocrFull: ocrFull,
+          // Raw OCR text for detailed analysis
+          rawOcrText: ocrFull?.rawOcrText || ocrFull?.rawText || ocrFull?.raw_text || null
         });
         if (out.length >= maxItems) break;
       }
@@ -691,8 +779,12 @@ async function callOpenAICompatible(rows) {
       role: 'system',
       content: [
         'Continue classification with the same rules and schema. Return ONLY the remaining results for the rows provided below.',
-        'Return exactly one JSON object and nothing else: {"results":[{...}]}',
-        'Do not repeat indices already returned; include only the rows supplied in this message. Ensure indices and ids match input.'
+        'Return exactly one JSON object and nothing else: {"results":[{"index":0,"id":"<same as input id>","classification":"GREEN|YELLOW|RED","rationale":"…","farSection":"31.xxx or \"\""}]}',
+        'Do not repeat indices already returned; include only the rows supplied in this message. Ensure indices and ids match input.',
+        'Compare GL data (amount, vendor, date, description) with OCR extracted data.',
+        'GREEN: All details match and receipt is clear/complete.',
+        'YELLOW: Minor inconsistencies or incomplete information.',
+        'RED: Major issues like missing receipts, obvious inaccuracies, or potential fraud.'
       ].join('\n')
     };
     const contRows = missing.map(i => normRow(rows[i], i));
@@ -720,17 +812,13 @@ async function callOpenAICompatible(rows) {
   return { results: merged, raw: content, parsed, warning, logs };
 }
 
-app.post('/api/llm-review', async (req, res) => {
+app.post('/api/llm-review', rateLimit('llm'), validateRequest(schemas.llmReview), async (req, res) => {
   try {
     console.log('=== LLM REVIEW REQUEST START ===');
     console.log('Request body:', JSON.stringify(req.body, null, 2));
-    const rows = req.body?.rows;
-    console.log('AI Review - Received rows:', rows?.length, 'rows');
-    if (rows?.length > 0) console.log('First row sample:', JSON.stringify(rows[0], null, 2));
-    if (!Array.isArray(rows) || rows.length === 0) {
-      console.log('ERROR: Invalid rows array');
-      return res.status(400).json({ error: 'rows must be a non-empty array' });
-    }
+    const rows = req.body.rows;
+    console.log('AI Review - Received rows:', rows.length, 'rows');
+    if (rows.length > 0) console.log('First row sample:', JSON.stringify(rows[0], null, 2));
     // Enforce: At least one image must be attached to a GL item present in rows
     try {
       const glIdsInRequest = new Set(rows.map(r => String(r.id || r.gl_entry_id || r.glId || r.gl_id)).filter(Boolean));
@@ -1060,7 +1148,7 @@ async function parseApprovalsWithLLM(rawText) {
 
 // scoreMatch and hasUnallowableKeyword moved to services/match.js
 
-app.post('/api/docs/ingest', upload.array('files', 10), async (req, res) => {
+app.post('/api/docs/ingest', rateLimit('upload'), upload.array('files', 10), async (req, res) => {
   try {
     console.log('📤 Document upload started:', req.files?.length || 0, 'files');
 
@@ -1669,6 +1757,11 @@ app.post('/api/logs', (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`API listening on 0.0.0.0:${port}`);
   validateAzureOpenAIConfig();
+  
+  // Start health check service
+  console.log('🏥 Starting health check service...');
+  healthCheckService.startPeriodicChecks(5 * 60 * 1000); // Check every 5 minutes
+  
   logger.info(LogCategory.SYSTEM, `Server started on port ${port}`, {
     port,
     node_version: process.version,
@@ -1685,7 +1778,7 @@ const glUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2
 // Track uploaded GL files in memory for duplicate detection
 memory.uploadedGLFiles = memory.uploadedGLFiles || [];
 
-app.post('/api/gl/normalize', glUpload.single('file'), async (req, res) => {
+app.post('/api/gl/normalize', rateLimit('upload'), glUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded' });
 
@@ -2249,3 +2342,16 @@ try {
     global.__FETCH_INSTRUMENTED__ = true;
   }
 } catch (_) {}
+
+// Graceful shutdown handler
+process.on('SIGINT', () => {
+  console.log('🛑 Received SIGINT, shutting down gracefully...');
+  healthCheckService.stopPeriodicChecks();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('🛑 Received SIGTERM, shutting down gracefully...');
+  healthCheckService.stopPeriodicChecks();
+  process.exit(0);
+});

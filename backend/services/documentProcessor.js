@@ -150,7 +150,7 @@ async function processWithMistralOCR(imageBuffer, options = {}) {
                 content: [
                     {
                         type: "text",
-                        text: "Extract the amount, date, and merchant/vendor name from this document. Return in JSON format with fields: amount, date, merchant."
+                        text: "Extract the amount, date, and merchant/vendor name from this document. Also provide the raw OCR text from the document. Return in JSON format with fields: amount, date, merchant, rawOcrText."
                     },
                     {
                         type: "image_url",
@@ -242,6 +242,7 @@ function extractMistralData(mistralResponse) {
                 merchant: extractedData.merchant || extractedData.vendor ? normalizeMerchant(extractedData.merchant || extractedData.vendor) : { value: null, confidence: 0 },
                 confidence: extractedData.confidence || 0.8,
                 rawMistralResponse: content,
+                rawOcrText: extractedData.rawOcrText || null, // Include raw OCR text from Mistral
                 mistralClassification: extractedData.documentType || extractedData.classification || extractedData.category,
                 documentType: 'other',
                 mistralData: extractedData // Preserve all Mistral data
@@ -263,6 +264,7 @@ function extractMistralData(mistralResponse) {
             merchant: normalizedMerchant,
             confidence: overallConfidence,
             rawMistralResponse: content,
+            rawOcrText: extractedData.rawOcrText || null, // Include raw OCR text from Mistral
             mistralData: extractedData
         };
 
@@ -305,9 +307,11 @@ function isTesseractFailed(ocr) {
     try {
         if (!ocr || !ocr.success) return true;
         const len = String(ocr.rawText || ocr.extractedText || '').trim().length;
-        if (len < 50) return true; // too little text
+        if (len < 20) return true; // Reduced from 50 to 20 - even short receipts can be valid
         const conf = Number(ocr.confidence || 0);
-        if (conf > 0 && conf < 50) return true; // confidence is 0-100 for tesseract.js
+        // Reduced confidence threshold from 50 to 30 for better performance
+        // Tesseract often produces useful results even with lower confidence
+        if (conf > 0 && conf < 30) return true; // confidence is 0-100 for tesseract.js
         return false;
     } catch (_) {
         return true;

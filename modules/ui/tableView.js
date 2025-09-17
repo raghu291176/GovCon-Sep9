@@ -365,9 +365,28 @@ function checkDocumentForApproval(docData) {
 
 function buildDetailsContent(glId) {
   try {
-    const links = (window.app?.docs?.links || []).filter(l => String(l.gl_entry_id) === String(glId));
-    const items = window.app?.docs?.items || [];
-    const docs = window.app?.docs?.documents || [];
+    // Add detailed logging to debug the issue
+    console.log('🔍 Building details for GL ID:', glId);
+    console.log('🔍 Window.app exists:', !!window.app);
+    console.log('🔍 Window.app.docs exists:', !!window.app?.docs);
+    console.log('🔍 Links array:', window.app?.docs?.links?.length || 0);
+    console.log('🔍 Items array:', window.app?.docs?.items?.length || 0);
+    console.log('🔍 Documents array:', window.app?.docs?.documents?.length || 0);
+
+    // Check if the app and docs structure exists
+    if (!window.app || !window.app.docs) {
+      console.warn('⚠️ App or docs structure not initialized');
+      return `<div class="gl-details"><div class="gl-details-section"><strong>Linked Documents:</strong> <span class="gl-details-muted">0 item(s)</span><div class="gl-details-muted">Document system not initialized. Try refreshing the page or upload documents first.</div></div></div>`;
+    }
+
+    // Initialize arrays if they don't exist
+    if (!window.app.docs.documents) window.app.docs.documents = [];
+    if (!window.app.docs.items) window.app.docs.items = [];
+    if (!window.app.docs.links) window.app.docs.links = [];
+
+    const links = (window.app.docs.links || []).filter(l => String(l.gl_entry_id) === String(glId));
+    const items = window.app.docs.items || [];
+    const docs = window.app.docs.documents || [];
     const linked = links.map(l => {
       const it = items.find(i => String(i.id) === String(l.document_item_id));
       const doc = it ? docs.find(d => String(d.id) === String(it.document_id)) : null;
@@ -526,7 +545,7 @@ function buildDetailsContent(glId) {
         const invOrReceipt = ex?.invoiceId ?? ex?.receiptId ?? null;
 
         // Check for approval in this document
-        const approvalFound = checkDocumentForApproval({ document: doc, docItem: item });
+        const approvalFound = checkDocumentForApproval({ document: doc, docItem: it });
         const approvalText = approvalFound ?
           '<span style="color: green; font-weight: bold;">Yes</span>' :
           '<span style="color: red; font-weight: bold;">No</span>';
@@ -579,7 +598,10 @@ function buildDetailsContent(glId) {
 
     const manage = `<div style=\"margin-top:8px;\"><button class=\"quick-link\" data-gl-id=\"${glId}\" onclick=\"window.app && window.app.openLinkModal && window.app.openLinkModal('${glId}')\">Manage Links</button></div>`;
     return `<div class="gl-details"><div class="gl-details-section"><strong>Linked Documents:</strong> <span class="gl-details-muted">${linked.length} item(s)</span>${gallery}${ocrBlock}${manage}</div></div>`;
-  } catch (_) {
-    return `<div class="gl-details">Failed to load details</div>`;
+  } catch (error) {
+    console.error('❌ Error in buildDetailsContent:', error);
+    console.error('❌ GL ID:', glId);
+    console.error('❌ Error stack:', error.stack);
+    return `<div class="gl-details">Failed to load details - ${error.message}</div>`;
   }
 }
