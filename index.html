@@ -1324,6 +1324,10 @@
                             <input type="file" id="docs-input" multiple accept=".pdf,.png,.jpg,.jpeg,.docx" />
                             <button id="ingest-docs-btn" class="btn btn--primary btn--compact mt-2">Ingest Documents</button>
                         </div>
+                        <div id="docs-processing-indicator" class="processing-indicator">
+                            <div class="spinner"></div>
+                            <span>Processing documents...</span>
+                        </div>
                         <div id="docs-status" class="compact-status"></div>
                         <div id="docs-summary" class="compact-status"></div>
                     </div>
@@ -1469,7 +1473,6 @@
                                 <tr>
                                     <th>Preview</th>
                                     <th>Filename</th>
-                                    <th>Type</th>
                                     <th>Size</th>
                                     <th>Upload Date</th>
                                     <th>OCR Status</th>
@@ -1922,31 +1925,79 @@
                         return;
                     }
                     
-                    if (statusEl) {
-                        statusEl.textContent = 'Processing documents...';
+                    const processingIndicator = document.getElementById('docs-processing-indicator');
+
+                    // Show processing indicator and upload message
+                    if (processingIndicator) {
+                        processingIndicator.classList.add('active');
+                        const span = processingIndicator.querySelector('span');
+                        if (span) span.textContent = 'Uploading documents...';
                     }
+
+                    // Disable the button during processing
+                    ingestBtn.disabled = true;
+                    ingestBtn.textContent = 'Uploading...';
                     
                     try {
                         // Check if backend is available for document processing
                         const healthCheck = await fetch('/api/system/health');
                         if (healthCheck.ok && window.app && window.app.apiBaseUrl) {
+                            // Update message to processing
+                            if (processingIndicator) {
+                                const span = processingIndicator.querySelector('span');
+                                if (span) span.textContent = 'Processing documents...';
+                            }
+                            ingestBtn.textContent = 'Processing...';
+
                             // Use the proper document upload function from the app
                             const files = Array.from(docsInput.files);
                             await window.app.ingestDocuments(files);
-                            statusEl.textContent = 'Documents processed successfully (backend integration active).';
+                            if (statusEl) statusEl.textContent = 'Documents processed successfully!';
                             // Refresh document files list
                             try {
                                 await window.app.refreshDocsSummary();
                                 await window.app.renderDocumentTable();
+                                await loadDocumentFiles(); // Refresh upload files list
                             } catch (_) {}
+
+                            // Auto-switch to Documents tab under Review and Audit
+                            setTimeout(() => {
+                                try {
+                                    // Switch to Review tab first
+                                    if (window.app && typeof window.app.switchTab === 'function') {
+                                        window.app.switchTab('review');
+                                    }
+                                    // Then switch to Documents subtab
+                                    setTimeout(() => {
+                                        const docReviewTab = document.getElementById('doc-review-subtab');
+                                        if (docReviewTab) {
+                                            docReviewTab.click();
+                                        }
+                                    }, 300);
+                                } catch (e) {
+                                    console.warn('Failed to auto-switch to documents tab:', e);
+                                }
+                            }, 500);
                         } else {
                             throw new Error('Backend not available or app not initialized');
                         }
                     } catch (error) {
                         console.error('Document upload error:', error);
                         if (statusEl) {
-                            statusEl.textContent = `Documents noted (backend features unavailable: ${error.message}).`;
+                            statusEl.textContent = `Upload failed: ${error.message}`;
                         }
+                    } finally {
+                        // Hide processing indicator and restore button
+                        if (processingIndicator) {
+                            processingIndicator.classList.remove('active');
+                            const span = processingIndicator.querySelector('span');
+                            if (span) span.textContent = 'Processing documents...'; // Reset default message
+                        }
+                        ingestBtn.disabled = false;
+                        ingestBtn.textContent = 'Ingest Documents';
+
+                        // Clear the file input
+                        docsInput.value = '';
                     }
                 });
             }

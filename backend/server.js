@@ -27,7 +27,7 @@ if (process.env.CLEAN_ON_START !== 'false') {
 }
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
 // Resolve repo root to serve static frontend
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

@@ -1,7 +1,7 @@
 // POC - Audit Materials System - Complete App.js with Document Linking Modal
 // Orchestrator (ES Modules)
 
-import { auditAll } from "./modules/services/auditService.js";
+import { auditAll, auditWithApprovalDetection } from "./modules/services/auditService.js";
 import { readExcelFile, mapExcelRows, readExcelAsAOA, mapRowsFromAOA, detectHeaderRow } from "./modules/services/excelService.js";
 import { normalizeGLSpreadsheet } from "./modules/services/apiService.js";
 import { renderGLTable, filterData } from "./modules/ui/tableView.js";
@@ -227,7 +227,7 @@ class FARComplianceApp {
 
           // Run initial audit if FAR rules are loaded
           if (this.farRules && this.farRules.length > 0) {
-            this.runInitialAudit();
+            await this.runInitialAudit();
           }
         } else {
           // No data on server - preserve local data if it exists
@@ -246,10 +246,25 @@ class FARComplianceApp {
     }
   }
 
-  runInitialAudit() {
+  async runInitialAudit() {
     if (this.glData && this.glData.length > 0 && this.farRules && this.farRules.length > 0) {
-      this.auditResults = auditAll(this.glData, this.farRules, this.config);
-      console.log("Initial audit completed with", this.auditResults.length, "results");
+      try {
+        // Use enhanced audit with approval detection if documents are available
+        if (this.docs && (this.docs.documents?.length > 0 || this.docs.items?.length > 0)) {
+          console.log("Running enhanced audit with approval detection...");
+          this.auditResults = await auditWithApprovalDetection(this.glData, this.farRules, this.docs, this.config);
+          console.log("Enhanced audit completed with", this.auditResults.length, "results");
+        } else {
+          // Fallback to standard audit if no documents
+          console.log("Running standard audit (no documents available for approval detection)...");
+          this.auditResults = auditAll(this.glData, this.farRules, this.config);
+          console.log("Standard audit completed with", this.auditResults.length, "results");
+        }
+      } catch (error) {
+        console.warn("Enhanced audit failed, falling back to standard audit:", error.message);
+        this.auditResults = auditAll(this.glData, this.farRules, this.config);
+        console.log("Fallback audit completed with", this.auditResults.length, "results");
+      }
     }
   }
 
@@ -617,6 +632,18 @@ class FARComplianceApp {
           self.updateDashboard();
           await self.renderUnmatchedList();
           try { await self.updateDocsControlsEnabled(); } catch (_) {}
+
+          // Refresh upload files lists in Upload & Process tab
+          try {
+            if (typeof window.loadUploadedFiles === 'function') {
+              await window.loadUploadedFiles();
+            } else if (typeof window.loadGLFiles === 'function' && typeof window.loadDocumentFiles === 'function') {
+              await window.loadGLFiles();
+              await window.loadDocumentFiles();
+            }
+          } catch (e) {
+            console.warn('Failed to refresh upload files lists:', e);
+          }
           
           s('Done.');
         } catch (error) {
@@ -1206,10 +1233,20 @@ class FARComplianceApp {
       this.documentModal.currentGLItem.linked_documents = [...newLinks];
       
       this.renderGLTable();
-      
+
       const changeCount = toLink.length + toUnlink.length;
       if (changeCount > 0) {
         alert(`Successfully updated ${changeCount} document link(s).`);
+
+        // Re-run audit to check for approval status changes
+        try {
+          console.log('Re-running audit after document linking...');
+          await this.runInitialAudit();
+          this.renderGLTable(); // Re-render table with updated audit results
+          console.log('Audit completed after document linking');
+        } catch (error) {
+          console.warn('Failed to re-run audit after document linking:', error);
+        }
       } else {
         alert('No changes were made.');
       }
@@ -1310,7 +1347,6 @@ class FARComplianceApp {
       fileDetails.innerHTML = `
         <p><strong>File:</strong> ${file.name}</p>
         <p><strong>Size:</strong> ${(file.size / 1024).toFixed(2)} KB</p>
-        <p><strong>Type:</strong> ${file.type}</p>
       `;
       fileInfo.classList.remove("hidden");
     } else if (fileInfo) {
@@ -1318,7 +1354,6 @@ class FARComplianceApp {
         <h4>File Information</h4>
         <p><strong>File:</strong> ${file.name}</p>
         <p><strong>Size:</strong> ${(file.size / 1024).toFixed(2)} KB</p>
-        <p><strong>Type:</strong> ${file.type}</p>
       `;
       fileInfo.classList.remove("hidden");
     }
@@ -1417,7 +1452,7 @@ class FARComplianceApp {
         console.warn('Server save failed (continuing with local data):', serverError.message);
       }
 
-      this.runInitialAudit();
+      await this.runInitialAudit();
       this.renderGLTable();
       this.switchTab("review");
       alert(`✅ Successfully processed ${this.glData.length} GL entries.`);
@@ -1494,7 +1529,7 @@ class FARComplianceApp {
     alert('Manual mapping UI would be shown here');
   }
 
-  runAudit() {
+  async runAudit() {
     const perfStart = Date.now();
     console.log("runAudit() called");
     console.log("GL Data length:", this.glData?.length || 0);
@@ -1517,15 +1552,28 @@ class FARComplianceApp {
         processingIndicator.classList.remove("hidden");
       }
 
-      console.log("Running auditAll with:", {
+      console.log("Running audit with:", {
         glDataCount: this.glData.length,
         farRulesCount: this.farRules.length,
+        docsAvailable: !!(this.docs && (this.docs.documents?.length > 0 || this.docs.items?.length > 0)),
         config: this.config,
         sampleGLItem: this.glData[0]
       });
 
-      this.auditResults = auditAll(this.glData, this.farRules, this.config);
-      
+      try {
+        // Use enhanced audit with approval detection if documents are available
+        if (this.docs && (this.docs.documents?.length > 0 || this.docs.items?.length > 0)) {
+          console.log("Running enhanced audit with approval detection...");
+          this.auditResults = await auditWithApprovalDetection(this.glData, this.farRules, this.docs, this.config);
+        } else {
+          console.log("Running standard audit (no documents available)...");
+          this.auditResults = auditAll(this.glData, this.farRules, this.config);
+        }
+      } catch (error) {
+        console.warn("Enhanced audit failed, falling back to standard audit:", error.message);
+        this.auditResults = auditAll(this.glData, this.farRules, this.config);
+      }
+
       console.log("Audit completed. Results count:", this.auditResults.length);
       console.log("Sample audit result:", this.auditResults[0]);
 

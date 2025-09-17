@@ -16,7 +16,7 @@
  */
 
 import { parse as parseCSV } from 'csv-parse/sync';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { parse as parseDateFns, isValid as isValidDate, format as formatDate } from 'date-fns';
 import currency from 'currency.js';
 
@@ -69,17 +69,28 @@ function detectFileKind(filename = '') {
   return 'unknown';
 }
 
-function bufferToRows(buffer, { filename } = {}) {
+async function bufferToRows(buffer, { filename } = {}) {
   const kind = detectFileKind(filename);
   if (kind === 'csv') {
     const text = new TextDecoder().decode(buffer);
     const records = parseCSV(text, { relaxColumnCount: true, skip_empty_lines: true });
     return records; // AOA
   }
-  // Default to XLSX parsing
-  const wb = XLSX.read(buffer, { type: 'buffer' });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }); // AOA
+  // Default to XLSX parsing with ExcelJS
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) return [];
+
+  const rows = [];
+  worksheet.eachRow((row, rowIndex) => {
+    const values = [];
+    row.eachCell((cell, colIndex) => {
+      values[colIndex - 1] = cell.value;
+    });
+    rows.push(values);
+  });
+  return rows; // AOA
 }
 
 // ============== Header detection =================
@@ -269,7 +280,7 @@ function normalizeRow(row, mapping) {
  */
 export async function normalizeSpreadsheet(buffer, { filename = 'upload.xlsx', useLLM = true } = {}) {
   const logs = []; const warnings = []; const errors = [];
-  const aoa = bufferToRows(buffer, { filename });
+  const aoa = await bufferToRows(buffer, { filename });
   if (!Array.isArray(aoa) || aoa.length === 0) return { rows: [], mapping: {}, headerRowIndex: 0, logs, warnings, errors: ['Empty spreadsheet'] };
 
   let headerRowIndex = null;
@@ -312,11 +323,25 @@ export function exportToCSV(rows) {
   return lines.join('\n');
 }
 
-export function exportToXLSX(rows) {
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet(rows || []);
-  XLSX.utils.book_append_sheet(wb, ws, 'Normalized');
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+export async function exportToXLSX(rows) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Normalized');
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return await workbook.xlsx.writeBuffer();
+  }
+
+  // Add headers
+  const headers = Object.keys(rows[0]);
+  worksheet.addRow(headers);
+
+  // Add data rows
+  rows.forEach(row => {
+    const values = headers.map(header => row[header]);
+    worksheet.addRow(values);
+  });
+
+  return await workbook.xlsx.writeBuffer();
 }
 
 export function exportToJSON(rows) {

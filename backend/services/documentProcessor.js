@@ -209,21 +209,46 @@ function extractMistralData(mistralResponse) {
                 amount: { value: null, confidence: 0 },
                 date: { value: null, confidence: 0 },
                 merchant: { value: null, confidence: 0 },
-                confidence: 0
+                confidence: 0,
+                rawMistralResponse: null
             };
         }
 
-        // Try to parse JSON from the response
+        // Return the raw Mistral response as-is for 'other' document types
+        // This preserves the classification and information provided by Mistral
         let extractedData;
         try {
             extractedData = JSON.parse(content);
         } catch (parseError) {
-            // If not valid JSON, try to extract information with regex
-            console.log('Failed to parse JSON, attempting regex extraction');
-            extractedData = extractWithRegex(content);
+            // If not valid JSON, treat the content as raw text classification
+            console.log('Mistral returned non-JSON response, treating as raw classification');
+            return {
+                amount: { value: null, confidence: 0 },
+                date: { value: null, confidence: 0 },
+                merchant: { value: null, confidence: 0 },
+                confidence: 0.8, // High confidence for raw Mistral classification
+                rawMistralResponse: content,
+                mistralClassification: content,
+                documentType: 'other'
+            };
         }
 
-        // Normalize the extracted data
+        // If we have structured JSON data, check if it contains classification info
+        if (extractedData.documentType || extractedData.classification || extractedData.category) {
+            // Return Mistral's classification as-is with minimal processing
+            return {
+                amount: extractedData.amount ? normalizeAmount(extractedData.amount) : { value: null, confidence: 0 },
+                date: extractedData.date ? normalizeDate(extractedData.date) : { value: null, confidence: 0 },
+                merchant: extractedData.merchant || extractedData.vendor ? normalizeMerchant(extractedData.merchant || extractedData.vendor) : { value: null, confidence: 0 },
+                confidence: extractedData.confidence || 0.8,
+                rawMistralResponse: content,
+                mistralClassification: extractedData.documentType || extractedData.classification || extractedData.category,
+                documentType: 'other',
+                mistralData: extractedData // Preserve all Mistral data
+            };
+        }
+
+        // Fallback to old behavior for receipt/invoice-like responses
         const normalizedAmount = normalizeAmount(extractedData.amount);
         const normalizedDate = normalizeDate(extractedData.date);
         const normalizedMerchant = normalizeMerchant(extractedData.merchant);
@@ -234,9 +259,11 @@ function extractMistralData(mistralResponse) {
 
         return {
             amount: normalizedAmount,
-            date: normalizedDate, 
+            date: normalizedDate,
             merchant: normalizedMerchant,
-            confidence: overallConfidence
+            confidence: overallConfidence,
+            rawMistralResponse: content,
+            mistralData: extractedData
         };
 
     } catch (error) {
@@ -245,7 +272,9 @@ function extractMistralData(mistralResponse) {
             amount: { value: null, confidence: 0 },
             date: { value: null, confidence: 0 },
             merchant: { value: null, confidence: 0 },
-            confidence: 0
+            confidence: 0,
+            rawMistralResponse: null,
+            error: error.message
         };
     }
 }

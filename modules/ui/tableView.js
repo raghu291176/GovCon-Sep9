@@ -129,6 +129,39 @@ export function renderGLTable(data) {
         }
       });
     });
+
+    // Use event delegation for tab switching (handles dynamically added tabs)
+    tbody.addEventListener('click', (e) => {
+      if (e.target.classList.contains('gl-tab-btn')) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const tabBtn = e.target;
+        console.log('Tab clicked:', tabBtn.textContent);
+
+        const tabIndex = tabBtn.getAttribute('data-tab-index');
+        const tabsContainer = tabBtn.closest('.gl-docs-tabs');
+
+        if (!tabsContainer) {
+          console.error('Tabs container not found');
+          return;
+        }
+
+        // Remove active class from all tabs and panels in this container
+        tabsContainer.querySelectorAll('.gl-tab-btn').forEach(btn => btn.classList.remove('active'));
+        tabsContainer.querySelectorAll('.gl-tab-panel').forEach(panel => panel.classList.remove('active'));
+
+        // Add active class to clicked tab and corresponding panel
+        tabBtn.classList.add('active');
+        const targetPanel = tabsContainer.querySelector(`[data-panel-index="${tabIndex}"]`);
+        if (targetPanel) {
+          targetPanel.classList.add('active');
+          console.log('Switched to tab panel:', tabIndex);
+        } else {
+          console.error('Target panel not found for index:', tabIndex);
+        }
+      }
+    });
   } catch (e) {
     console.error('Failed to bind GL row interactions:', e);
   }
@@ -260,6 +293,16 @@ body.compact .gl-thumb { width:56px; min-width:56px; height:56px; }
 .gl-thumb-fallback { font-size:12px; font-weight:600; color:#374151; }
 .gl-thumb-caption { display:none; }
 .gl-thumb-badge { position:absolute; bottom:2px; right:2px; font-size:10px; line-height:1; background:rgba(17,24,39,0.7); color:#fff; padding:1px 4px; border-radius:3px; text-transform:uppercase; }
+
+/* GL Document Tabs */
+.gl-docs-tabs { margin-top: 8px; }
+.gl-tabs-header { display: flex; border-bottom: 1px solid #e5e7eb; margin-bottom: 8px; }
+.gl-tab-btn { background: #f1f5f9; border: 1px solid #cbd5e1; border-bottom: none; padding: 10px 16px; font-size: 13px; font-weight: 500; cursor: pointer; color: #475569; transition: all 0.2s; border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 3px; text-decoration: none; user-select: none; }
+.gl-tab-btn:hover { color: #1e293b; background: #ffffff; border-color: #94a3b8; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transform: translateY(-1px); }
+.gl-tab-btn.active { color: #1e40af; background: #ffffff; border-color: #cbd5e1; border-bottom: 2px solid #ffffff; position: relative; z-index: 1; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.gl-tabs-content { position: relative; }
+.gl-tab-panel { display: none; }
+.gl-tab-panel.active { display: block; }
 `;
 
 // Inject the additional CSS if not already present
@@ -268,6 +311,56 @@ if (!document.getElementById('table-view-styles')) {
   styleElement.id = 'table-view-styles';
   styleElement.innerHTML = additionalCSS;
   document.head.appendChild(styleElement);
+}
+
+/**
+ * Check if a document contains approval keywords
+ */
+function checkDocumentForApproval(docData) {
+  const { document, docItem } = docData;
+
+  // Keywords to search for (including synonyms)
+  const approvalKeywords = [
+    'approved', 'approval', 'approve', 'approving',
+    'authorized', 'authorised', 'authorization', 'authorisation',
+    'sign off', 'sign-off', 'signoff',
+    'ok to pay', 'payment approved', 'authorized for payment',
+    'reviewed and approved', 'approved for payment',
+    'sanctioned', 'validated', 'confirmed approval'
+  ];
+
+  // Check document filename
+  const filename = (document.filename || '').toLowerCase();
+  if (approvalKeywords.some(keyword => filename.includes(keyword))) {
+    return true;
+  }
+
+  // Check OCR text content
+  const textContent = (document.text_content || '').toLowerCase();
+  if (approvalKeywords.some(keyword => textContent.includes(keyword))) {
+    return true;
+  }
+
+  // Check extracted data if available
+  try {
+    if (textContent.startsWith('ocr extracted data: ')) {
+      const extractedData = JSON.parse(textContent.replace('ocr extracted data: ', ''));
+      const extractedText = JSON.stringify(extractedData).toLowerCase();
+      if (approvalKeywords.some(keyword => extractedText.includes(keyword))) {
+        return true;
+      }
+    }
+  } catch (e) {
+    // Ignore JSON parsing errors
+  }
+
+  // Check docItem data
+  const docItemText = JSON.stringify(docItem || {}).toLowerCase();
+  if (approvalKeywords.some(keyword => docItemText.includes(keyword))) {
+    return true;
+  }
+
+  return false;
 }
 
 function buildDetailsContent(glId) {
@@ -282,7 +375,11 @@ function buildDetailsContent(glId) {
     }).filter(x => x.doc);
 
     const base = (window.app?.apiBaseUrl || '').replace(/\/$/, '');
-    const gallery = linked.length
+
+    // If multiple files, show tabs; otherwise show gallery
+    const gallery = linked.length === 0
+      ? `<div class="gl-details-muted">No documents linked. Use the Link button to attach.</div>`
+      : linked.length === 1
       ? `<div class="gl-linked-gallery">${linked.map(({ doc }) => {
             const name = String(doc.filename || '').replace(/</g, '&lt;');
             const href = doc.file_url ? `${base}${doc.file_url}` : '#';
@@ -294,12 +391,114 @@ function buildDetailsContent(glId) {
             const badge = (doc.doctype || 'other');
             return `<a class=\"gl-thumb\" href=\"${href}\" target=\"_blank\" title=\"${name}\">${thumb}<span class=\"gl-thumb-badge ${badge}\">${badge}</span></a>`;
         }).join('')}</div>`
-      : `<div class="gl-details-muted">No documents linked. Use the Link button to attach.</div>`;
+      : `<div class="gl-docs-tabs" data-gl-id="${glId}">
+          <div class="gl-tabs-header">
+            ${linked.map(({ doc }, idx) => {
+              const name = String(doc.filename || 'Document').replace(/</g, '&lt;');
+              const shortName = name.length > 15 ? name.substring(0, 12) + '...' : name;
+              return `<button class="gl-tab-btn ${idx === 0 ? 'active' : ''}" data-tab-index="${idx}" title="${name}">${shortName}</button>`;
+            }).join('')}
+          </div>
+          <div class="gl-tabs-content">
+            ${linked.map(({ doc }, idx) => {
+              const name = String(doc.filename || '').replace(/</g, '&lt;');
+              const href = doc.file_url ? `${base}${doc.file_url}` : '#';
+              const isImage = (doc.mimetype && doc.mimetype.startsWith('image/')) || /\.(png|jpe?g|gif|bmp|webp|tiff?)$/i.test(doc.filename || '');
+              const isPdf = /\.pdf$/i.test(doc.filename || '');
+              const thumb = isImage && href && href !== '#'
+                ? `<img class=\"gl-thumb-img\" src=\"${href}\" alt=\"${name}\" onerror=\"this.style.display='none'\">`
+                : `<div class=\"gl-thumb-fallback\">${isPdf ? 'PDF' : 'DOC'}</div>`;
+              const badge = (doc.doctype || 'other');
+              // Generate OCR data for this specific document
+              const it = linked[idx].it;
+              const link = linked[idx].link;
+              const amt = Number(it?.amount);
+              const dt = it?.date || '';
+              const ven = it?.vendor || it?.merchant || '';
+              const method = it?.details?.processing_method || (doc?.meta?.processing_method) || '';
+              const score = (link && (link.score || link.match_score)) ? Math.round((link.score || link.match_score) * 100) + '%' : (doc?.document_match_score ? Math.round(doc.document_match_score) + '%' : '');
+
+              let ex = null;
+              try {
+                if ((doc?.text_content || '').startsWith('OCR extracted data: ')) {
+                  ex = JSON.parse(doc.text_content.replace('OCR extracted data: ', ''));
+                }
+              } catch(_) {}
+
+              const fmtVal = (value, opts={}) => {
+                if (value === null || value === undefined || value === '') return '—';
+                if (opts.money && Number.isFinite(Number(value))) return `$${Number(value).toLocaleString('en-US',{minimumFractionDigits:2})}`;
+                if (Array.isArray(value)) return value.map(x => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(', ');
+                if (typeof value === 'object') { try { return JSON.stringify(value); } catch { return String(value); } }
+                return String(value);
+              };
+              const kv = (label, value, opts={}) => `<div><strong>${label}</strong><div>${fmtVal(value, opts)}</div></div>`;
+
+              const idLabel = 'Invoice ID / Receipt ID';
+              const invOrReceipt = ex?.invoiceId ?? ex?.receiptId ?? null;
+
+              // Check for approval keywords in this document
+              const hasApproval = checkDocumentForApproval({ document: doc, docItem: it });
+              const approvalStatus = hasApproval ? 'Yes' : 'No';
+              const approvalColor = hasApproval ? '#16a34a' : '#dc2626'; // green : red
+
+              const primary = `
+                <div class="gl-details-grid" style="margin-top:8px;">
+                  ${kv('Transaction Date', dt || '—')}
+                  ${kv('Merchant', ven || '—')}
+                  ${kv(idLabel, invOrReceipt || '—')}
+                  ${kv('Method', method || '—')}
+                  ${score ? kv('Match Score', score) : ''}
+                  <div><strong>Approval Found</strong><div style="color:${approvalColor};font-weight:600;">${approvalStatus}</div></div>
+                </div>`;
+
+              const secondary = ex ? `
+                <div class="gl-details-grid" style="margin-top:8px;grid-template-columns:repeat(3,minmax(0,1fr));">
+                  ${kv('Description', ex.description)}
+                  ${kv('Summary', ex.summary)}
+                  ${kv('Customer Name', ex.customerName)}
+                  ${kv('Billing Address', ex.billingAddress)}
+                  ${kv('Merchant Address', ex.merchantAddress)}
+                  ${kv('Merchant Phone', ex.merchantPhone)}
+                  ${kv('Receipt Type', ex.receiptType)}
+                  ${kv('Transaction Time', ex.transactionTime)}
+                  ${kv('Subtotal', ex.subtotal ?? ex.subTotal, {money:true})}
+                  ${kv('Tax', ex.tax, {money:true})}
+                  ${kv('Tip', ex.tip, {money:true})}
+                  ${kv('Total Amount', Number.isFinite(Number(amt)) ? amt : (ex.amount ?? null), {money:true})}
+                </div>` : '';
+
+              let approvals = '';
+              if (Array.isArray(doc?.approvals) && doc.approvals.length) {
+                const rows = doc.approvals.map(a => {
+                  const dec = (a.decision || 'unknown').toString().toUpperCase();
+                  const who = a.approver || 'Unknown';
+                  const title = a.title ? ` (${a.title})` : '';
+                  const when = a.date ? ` on ${a.date}` : '';
+                  return `<div>- ${dec}: ${who}${title}${when}</div>`;
+                }).join('');
+                approvals = `<div style="margin-top:8px;"><strong>Approvals</strong><div>${rows}</div></div>`;
+              }
+
+              return `<div class="gl-tab-panel ${idx === 0 ? 'active' : ''}" data-panel-index="${idx}">
+                        <div class="gl-linked-gallery">
+                          <a class="gl-thumb" href="${href}" target="_blank" title="${name}">${thumb}<span class="gl-thumb-badge ${badge}">${badge}</span></a>
+                        </div>
+                        ${primary}${secondary}${approvals}
+                      </div>`;
+            }).join('')}
+          </div>
+        </div>`;
 
     let ocrBlock = '';
     if (linked.length) {
-      // Build a rich block per linked item with all OCR fields we have
-      const perItem = linked.map(({ it, doc, link }) => {
+      // For multiple tabs, show OCR data inside each tab panel
+      if (linked.length > 1) {
+        // OCR data will be shown inside each tab panel, so just add placeholders here
+        ocrBlock = '';
+      } else {
+        // Single document - show OCR data below as before
+        const perItem = linked.map(({ it, doc, link }) => {
         const amt = Number(it?.amount);
         const dt = it?.date || '';
         const ven = it?.vendor || it?.merchant || '';
@@ -325,12 +524,20 @@ function buildDetailsContent(glId) {
         // Primary info row (renamed and reordered)
         const idLabel = 'Invoice ID / Receipt ID';
         const invOrReceipt = ex?.invoiceId ?? ex?.receiptId ?? null;
+
+        // Check for approval in this document
+        const approvalFound = checkDocumentForApproval({ document: doc, docItem: item });
+        const approvalText = approvalFound ?
+          '<span style="color: green; font-weight: bold;">Yes</span>' :
+          '<span style="color: red; font-weight: bold;">No</span>';
+
         const primary = `
           <div class="gl-details-grid" style="margin-top:8px;">
             ${kv('Transaction Date', dt || '—')}
             ${kv('Merchant', ven || '—')}
             ${kv(idLabel, invOrReceipt || '—')}
             ${kv('Method', method || '—')}
+            ${kv('Approval Found', approvalText)}
             ${score ? kv('Match Score', score) : ''}
           </div>`;
 
@@ -367,6 +574,7 @@ function buildDetailsContent(glId) {
         return primary + secondary + approvals;
       }).join('');
       ocrBlock = perItem;
+      }
     }
 
     const manage = `<div style=\"margin-top:8px;\"><button class=\"quick-link\" data-gl-id=\"${glId}\" onclick=\"window.app && window.app.openLinkModal && window.app.openLinkModal('${glId}')\">Manage Links</button></div>`;
