@@ -2163,7 +2163,7 @@ class FARComplianceApp {
       if (tableBody) {
         tableBody.innerHTML = `
           <tr>
-            <td colspan="9" style="text-align: center; color: #ef4444; padding: 20px;">
+            <td colspan="8" style="text-align: center; color: #ef4444; padding: 20px;">
               Error loading documents: ${error.message || error}
               <br><small>Check console for details</small>
             </td>
@@ -2220,11 +2220,6 @@ class FARComplianceApp {
 
           return `
             <tr data-doc-id="${doc.id}" data-index="${index}">
-              <td>
-                <div class="document-preview">
-                  ${this.renderDocumentPreview(doc)}
-                </div>
-              </td>
               <td>
                 <div class="document-name" title="${doc.filename}">${doc.filename}</div>
                 <div class="document-meta" style="font-size: 12px; color: #6b7280;" title="${doc.id}">
@@ -2285,7 +2280,7 @@ class FARComplianceApp {
       console.error('❌ Error rendering document table:', renderError);
       tableBody.innerHTML = `
         <tr>
-          <td colspan="9" style="text-align: center; color: #ef4444; padding: 20px;">
+          <td colspan="8" style="text-align: center; color: #ef4444; padding: 20px;">
             Error rendering documents table
             <br><small>Check console for details</small>
           </td>
