@@ -502,27 +502,59 @@
         /* Tables */
         .table-container {
             overflow-x: auto;
+            overflow-y: hidden;
             border-radius: 8px;
             border: 1px solid #E5E7EB;
+            background: #FFFFFF;
+            max-width: 100%;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .metric-card {
+                padding: 6px 10px;
+            }
+
+            .metric-value {
+                font-size: 16px;
+            }
+
+            .metric-label {
+                font-size: 11px;
+            }
+
+            .data-table th,
+            .data-table td {
+                padding: 8px 6px;
+                font-size: 12px;
+            }
+
+            .data-table td:first-child {
+                white-space: normal;
+                min-width: 120px;
+            }
+
+            .flex.gap-4 {
+                gap: 8px;
+            }
         }
 
         .data-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 13px;
-        }
-
-        .data-table {
             table-layout: fixed;
-            width: 100%;
+            font-size: 13px;
         }
 
         .data-table th,
         .data-table td {
-            padding: 8px 10px;
+            padding: 10px 12px;
             text-align: left;
             border-bottom: 1px solid #F3F4F6;
             font-size: 13px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .data-table th {
@@ -577,21 +609,24 @@
 
         .metric-card {
             background: #FFFFFF;
-            border-radius: 8px;
-            padding: 12px 16px;
-            box-shadow: 0 2px 8px rgba(30, 41, 59, 0.06);
+            border-radius: 6px;
+            padding: 8px 12px;
+            box-shadow: 0 1px 3px rgba(30, 41, 59, 0.08);
             border: 1px solid #E5E7EB;
+            text-align: center;
         }
 
         .metric-value {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 2px;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 1px;
+            color: #1F2937;
         }
 
         .metric-label {
             color: #6B7280;
-            font-size: 14px;
+            font-size: 12px;
+            font-weight: 500;
         }
 
         /* Charts */
@@ -1461,7 +1496,11 @@
                 <div class="card">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="card-title">Document Review</h2>
-                        <div class="flex gap-4">
+                        <div class="flex gap-4 items-center">
+                            <label class="flex items-center text-sm">
+                                <input type="checkbox" id="unprocessed-only" class="checkbox-input" />
+                                Unprocessed Only
+                            </label>
                             <button type="button" id="azure-ocr-btn" class="btn btn--primary">Run Azure OCR</button>
                             <button type="button" id="refresh-docs-btn" class="btn btn--outline">Refresh Documents</button>
                             <button type="button" id="debug-docs-btn" class="btn btn--outline" style="font-size: 12px;">Debug Info</button>
@@ -1482,14 +1521,10 @@
                             <option value="approval">Approvals</option>
                             <option value="other">Other</option>
                         </select>
-                        <label class="flex items-center">
-                            <input type="checkbox" id="unprocessed-only" class="checkbox-input" />
-                            Unprocessed Only
-                        </label>
                     </div>
 
                     <!-- Document Status Summary -->
-                    <div class="grid grid-cols-4 gap-4 mb-6">
+                    <div class="grid grid-cols-4 gap-3 mb-4">
                         <div class="metric-card">
                             <div class="metric-value" id="total-documents">0</div>
                             <div class="metric-label">Total Documents</div>
