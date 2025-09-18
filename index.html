@@ -1179,6 +1179,36 @@
             font-size: 13px;
         }
 
+        .compact-status.success {
+            color: #166534;
+            background: #dcfce7;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #bbf7d0;
+        }
+
+        .compact-status.error {
+            color: #991b1b;
+            background: #fee2e2;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #fecaca;
+        }
+
+        .compact-status.info {
+            color: #1e40af;
+            background: #dbeafe;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #bfdbfe;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
         .file-list-compact {
             max-height: 300px;
             overflow-y: auto;
@@ -1298,6 +1328,11 @@
                             <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
                             <button id="process-gl-btn" class="btn btn--primary btn--compact mt-2">Process GL Data</button>
                         </div>
+                        <div id="gl-processing-indicator" class="processing-indicator">
+                            <div class="spinner"></div>
+                            <span>Processing GL data...</span>
+                        </div>
+                        <div id="gl-status" class="compact-status"></div>
                         <div id="file-info" class="compact-info hidden">
                             <div id="file-details"></div>
                         </div>
@@ -1857,55 +1892,163 @@
                 loadUploadedFiles();
                 initializeGLTableSorting();
             }, 500);
+
+            // Add file selection feedback
+            const fileInput = document.getElementById('file-input');
+            if (fileInput) {
+                fileInput.addEventListener('change', function(e) {
+                    const statusEl = document.getElementById('gl-status');
+                    const file = e.target.files[0];
+
+                    if (statusEl) {
+                        if (file) {
+                            statusEl.textContent = `📄 File selected: ${file.name} (${formatFileSize(file.size)}). Click "Process GL Data" to continue.`;
+                            statusEl.className = 'compact-status info';
+                        } else {
+                            statusEl.textContent = '';
+                            statusEl.className = 'compact-status';
+                        }
+                    }
+                });
+            }
             
-            // Enhanced GL Processing with backend integration
+            // Enhanced GL Processing with comprehensive user feedback
             const processBtn = document.getElementById('process-gl-btn');
             if (processBtn) {
                 processBtn.addEventListener('click', async function(e) {
                     e.preventDefault();
                     console.log('Process GL button clicked via enhanced fallback');
-                    
+
                     const fileInput = document.getElementById('file-input');
+                    const processingIndicator = document.getElementById('gl-processing-indicator');
+                    const statusEl = document.getElementById('gl-status');
+
+                    // Clear previous status
+                    if (statusEl) {
+                        statusEl.textContent = '';
+                        statusEl.className = 'compact-status';
+                    }
+
+                    // Validate file selection
                     if (!fileInput.files || fileInput.files.length === 0) {
-                        alert('Please select an Excel file first.');
+                        if (statusEl) {
+                            statusEl.textContent = 'Please select an Excel file first.';
+                            statusEl.className = 'compact-status error';
+                        }
                         return;
                     }
-                    
+
                     const file = fileInput.files[0];
-                    const processingIndicator = document.getElementById('processing-indicator');
-                    
-                    try {
-                        if (processingIndicator) {
-                            processingIndicator.classList.remove('hidden');
-                            processingIndicator.classList.add('active');
+
+                    // Validate file type
+                    const allowedTypes = ['.xlsx', '.xls', '.csv'];
+                    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+                    if (!allowedTypes.includes(fileExtension)) {
+                        if (statusEl) {
+                            statusEl.textContent = `Invalid file type. Please select an Excel (.xlsx, .xls) or CSV file.`;
+                            statusEl.className = 'compact-status error';
                         }
-                        
+                        return;
+                    }
+
+                    try {
+                        // Show processing state
+                        processBtn.disabled = true;
+                        processBtn.textContent = 'Processing...';
+
+                        if (processingIndicator) {
+                            processingIndicator.classList.add('active');
+                            const span = processingIndicator.querySelector('span');
+                            if (span) span.textContent = 'Reading file...';
+                        }
+
+                        if (statusEl) {
+                            statusEl.textContent = 'Processing file...';
+                            statusEl.className = 'compact-status info';
+                        }
+
                         // Try processing the Excel file client-side (fallback)
+                        let processedData;
                         try {
-                            await processExcelFileInFallback(file);
+                            if (processingIndicator) {
+                                const span = processingIndicator.querySelector('span');
+                                if (span) span.textContent = 'Parsing Excel data...';
+                            }
+
+                            processedData = await processExcelFileInFallback(file);
+
+                            if (processingIndicator) {
+                                const span = processingIndicator.querySelector('span');
+                                if (span) span.textContent = 'Saving data...';
+                            }
+
                         } catch (fallbackErr) {
                             console.warn('Fallback processing failed:', fallbackErr?.message || fallbackErr);
-                            alert('Could not process the Excel file locally. Please try again or start the backend.');
+                            throw new Error('Could not process the Excel file. Please check the file format and try again.');
                         }
-                        
-                        // Refresh uploaded files list
-                        try { await loadGLFiles(); } catch (_) {}
 
-                        // Switch to review tab after processing
-                        const reviewTab = document.querySelector('[data-tab="review"]');
-                        if (reviewTab) {
-                            reviewTab.click();
+                        // Get the processed data to show in status
+                        const glData = JSON.parse(localStorage.getItem('glData') || '[]');
+                        const entryCount = glData.length;
+
+                        // Update status with success message
+                        if (statusEl) {
+                            statusEl.textContent = `✅ Successfully processed ${entryCount} GL entries from "${file.name}"`;
+                            statusEl.className = 'compact-status success';
                         }
-                        // Populate the table from localStorage/server in fallback mode
-                        try { await loadGLDataInFallbackMode(); } catch (_) {}
-                        
+
+                        // Refresh uploaded files list
+                        if (processingIndicator) {
+                            const span = processingIndicator.querySelector('span');
+                            if (span) span.textContent = 'Updating file list...';
+                        }
+
+                        try {
+                            await loadGLFiles();
+                        } catch (err) {
+                            console.warn('Could not refresh file list:', err);
+                        }
+
+                        // Auto-switch to review tab after processing
+                        setTimeout(() => {
+                            const reviewTab = document.querySelector('[data-tab="review"]');
+                            if (reviewTab) {
+                                reviewTab.click();
+                                // Update status to indicate what happened
+                                if (statusEl) {
+                                    statusEl.textContent = `✅ ${entryCount} GL entries processed. Switched to Review tab to view data.`;
+                                    statusEl.className = 'compact-status success';
+                                }
+                            }
+
+                            // Populate the table from localStorage/server in fallback mode
+                            try {
+                                loadGLDataInFallbackMode();
+                            } catch (err) {
+                                console.warn('Could not load GL data in review tab:', err);
+                            }
+                        }, 1000);
+
+                        // Clear the file input
+                        fileInput.value = '';
+
                     } catch (error) {
                         console.error('Processing error:', error);
-                        alert('Error processing file: ' + error.message);
+
+                        if (statusEl) {
+                            statusEl.textContent = `❌ Error: ${error.message}`;
+                            statusEl.className = 'compact-status error';
+                        }
+
                     } finally {
+                        // Reset UI state
+                        processBtn.disabled = false;
+                        processBtn.textContent = 'Process GL Data';
+
                         if (processingIndicator) {
-                            processingIndicator.classList.add('hidden');
                             processingIndicator.classList.remove('active');
+                            const span = processingIndicator.querySelector('span');
+                            if (span) span.textContent = 'Processing GL data...'; // Reset default message
                         }
                     }
                 });
@@ -2201,10 +2344,11 @@
         async function processExcelFileInFallback(file) {
             // Prefer real parsing via global XLSX if available; else generate sample data
             if (typeof XLSX === 'undefined') {
+                console.log('XLSX library not available, generating sample data');
                 const sampleGLData = generateSampleGLData(file.name);
                 localStorage.setItem('glData', JSON.stringify(sampleGLData));
                 localStorage.setItem('lastProcessedFile', JSON.stringify({ filename: file.name, size: file.size, processedAt: new Date().toISOString(), entryCount: sampleGLData.length }));
-                return;
+                return sampleGLData;
             }
             
             const arrayBuffer = await file.arrayBuffer();
@@ -2255,6 +2399,7 @@
             
             localStorage.setItem('glData', JSON.stringify(mapped));
             localStorage.setItem('lastProcessedFile', JSON.stringify({ filename: file.name, size: file.size, processedAt: new Date().toISOString(), entryCount: mapped.length }));
+            return mapped;
         }
         
         function generateSampleGLData(filename) {
