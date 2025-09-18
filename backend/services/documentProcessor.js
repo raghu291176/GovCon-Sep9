@@ -14,8 +14,14 @@ import { analyzeReceipt, analyzeInvoice } from './documentIntelligenceService.js
 
 async function processDocument(imageBuffer, tesseractResult, options = {}) {
     const processingStartTime = Date.now();
+
+    // Validate inputs
+    if (!imageBuffer || !Buffer.isBuffer(imageBuffer) || imageBuffer.length === 0) {
+        throw new Error('Invalid image buffer provided to document processor');
+    }
+
     const extractedText = String(tesseractResult?.rawText || tesseractResult?.extractedText || '').toLowerCase();
-    
+
     console.log('Starting basic document processing with classification...');
     
     try {

@@ -3,7 +3,7 @@ import { processDocument } from './documentProcessor.js';
 import { findGLMatches, preprocessGLEntries } from './glMatcher.js';
 
 function generateDocumentId() {
-    return `DOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `DOC-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }
 
 async function processDocumentWorkflow(imageBuffer, glEntries, options = {}) {

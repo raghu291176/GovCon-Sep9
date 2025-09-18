@@ -10,18 +10,33 @@ const upload = multer({
         files: 10
     },
     fileFilter: (req, file, cb) => {
-        const allowedMimeTypes = [
-            'image/jpeg',
-            'image/png',
-            'image/tiff',
-            'image/bmp',
-            'application/pdf'
-        ];
-        
-        if (allowedMimeTypes.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error(`Unsupported file type: ${file.mimetype}`), false);
+        try {
+            const allowedMimeTypes = [
+                'image/jpeg',
+                'image/jpg',
+                'image/png',
+                'image/tiff',
+                'image/tif',
+                'image/bmp',
+                'application/pdf'
+            ];
+
+            // Also check file extension as backup
+            const allowedExtensions = ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.pdf'];
+            const fileExtension = file.originalname ? file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.')) : '';
+
+            if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
+                cb(null, true);
+            } else {
+                const error = new Error(`Unsupported file type: ${file.mimetype}. Allowed types: ${allowedMimeTypes.join(', ')}`);
+                error.code = 'INVALID_FILE_TYPE';
+                cb(error, false);
+            }
+        } catch (error) {
+            console.error('File filter error:', error);
+            const filterError = new Error('File validation failed');
+            filterError.code = 'FILE_FILTER_ERROR';
+            cb(filterError, false);
         }
     }
 });
@@ -207,6 +222,7 @@ router.get('/supported-formats', (req, res) => {
     });
 });
 
+// Express 5.x compatible error handler
 router.use((error, req, res, next) => {
     if (error instanceof multer.MulterError) {
         if (error.code === 'LIMIT_FILE_SIZE') {
@@ -217,7 +233,7 @@ router.use((error, req, res, next) => {
                 details: 'Maximum file size is 10MB'
             });
         }
-        
+
         if (error.code === 'LIMIT_FILE_COUNT') {
             return res.status(400).json({
                 success: false,
@@ -226,12 +242,33 @@ router.use((error, req, res, next) => {
                 details: 'Maximum 10 files per batch'
             });
         }
+
+        if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+            return res.status(400).json({
+                success: false,
+                error: 'Unexpected file field',
+                code: 'UNEXPECTED_FILE',
+                details: error.message
+            });
+        }
     }
-    
+
+    // Handle file filter errors
+    if (error.message && error.message.includes('Unsupported file type')) {
+        return res.status(400).json({
+            success: false,
+            error: 'Unsupported file type',
+            code: 'INVALID_FILE_TYPE',
+            details: error.message
+        });
+    }
+
+    console.error('Document upload error:', error);
     res.status(500).json({
         success: false,
         error: 'Internal server error',
-        code: 'INTERNAL_ERROR'
+        code: 'INTERNAL_ERROR',
+        details: error.message
     });
 });
 
