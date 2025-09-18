@@ -48,6 +48,7 @@ const memory = {
   docItems: [],  // { id, document_id, kind, vendor, date, amount, currency, details, text_excerpt }
   glDocLinks: [],// { document_item_id, gl_entry_id, score, doc_summary, doc_flag_unallowable }
   di: {},        // Azure Document Intelligence config
+  uploadedGLFiles: [], // { id, filename, hash, size, uploadedAt, entryCount, processing }
 };
 
 // Robust amount parser for server-side GL ingestion
@@ -2155,6 +2156,7 @@ app.delete('/api/admin/clear-gl', (req, res) => {
   try {
     memory.glEntries = [];
     memory.glDocLinks = [];
+    memory.uploadedGLFiles = [];
     recomputeAttachmentFlags();
     try {
       if (sqlite?.db) {
@@ -2195,6 +2197,7 @@ app.delete('/api/admin/clear-all', (req, res) => {
     memory.documents = [];
     memory.docItems = [];
     memory.glDocLinks = [];
+    memory.uploadedGLFiles = [];
 
     // Clear uploaded files
     console.log('📁 Clearing uploaded files');

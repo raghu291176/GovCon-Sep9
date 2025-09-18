@@ -647,6 +647,11 @@ class FARComplianceApp {
             if (glFileInput) {
               glFileInput.value = '';
             }
+            if (typeof localStorage !== 'undefined') {
+              localStorage.removeItem('glData');
+              localStorage.removeItem('lastProcessedFile');
+            }
+            self.syncUploadedFilesList();
           }
           if (path.includes('clear-docs') || path.includes('clear-all')) {
             self.docs = { ...self.docs, items: [], links: [], documents: [] };
