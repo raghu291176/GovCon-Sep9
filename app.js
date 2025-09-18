@@ -1530,7 +1530,7 @@ class FARComplianceApp {
     }
 
     // Reset file input
-    const fileInput = document.getElementById("gl-input");
+    const fileInput = document.getElementById("file-input");
     if (fileInput) {
       fileInput.value = '';
     }
