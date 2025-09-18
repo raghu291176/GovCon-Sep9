@@ -2135,14 +2135,24 @@
 
                             // Use the proper document upload function from the app
                             const files = Array.from(docsInput.files);
-                            await window.app.ingestDocuments(files);
-                            if (statusEl) statusEl.textContent = 'Documents processed successfully!';
-                            // Refresh document files list
                             try {
-                                await window.app.refreshDocsSummary();
-                                await window.app.renderDocumentTable();
-                                await loadDocumentFiles(); // Refresh upload files list
-                            } catch (_) {}
+                                await window.app.ingestDocuments(files);
+                                if (statusEl) statusEl.textContent = 'Documents processed successfully!';
+                                // Refresh document files list
+                                try {
+                                    await window.app.refreshDocsSummary();
+                                    await window.app.renderDocumentTable();
+                                    await loadDocumentFiles(); // Refresh upload files list
+                                } catch (_) {}
+                            } catch (error) {
+                                console.error('Document ingestion failed:', error);
+                                if (statusEl) statusEl.textContent = `Upload failed: ${error.message || error}`;
+                                if (processingIndicator) {
+                                    const span = processingIndicator.querySelector('span');
+                                    if (span) span.textContent = `Error: ${error.message || error}`;
+                                }
+                                throw error; // Re-throw to be caught by outer catch
+                            }
 
                             // Auto-switch to Documents tab under Review and Audit
                             setTimeout(() => {

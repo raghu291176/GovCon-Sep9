@@ -1541,6 +1541,89 @@ class FARComplianceApp {
     }
   }
 
+  async ingestDocuments(files) {
+    const statusEl = document.getElementById('upload-status');
+    const perfStart = Date.now();
+
+    if (!this.apiBaseUrl) {
+      if (statusEl) statusEl.textContent = 'Server not available. Ensure backend is running.';
+      throw new Error('Server not available. Ensure backend is running.');
+    }
+
+    const list = Array.from(files);
+    if (!list.length) {
+      if (statusEl) statusEl.textContent = 'No files selected.';
+      if (this.showToast) this.showToast('No files selected.', 'warn');
+      throw new Error('No files selected.');
+    }
+
+    try {
+      const gl = await fetchGLEntries(this.apiBaseUrl, 1, 0);
+      const count = Array.isArray(gl.rows) ? gl.rows.length : 0;
+      if ((this.glData?.length || 0) === 0 && count === 0) {
+        if (statusEl) statusEl.textContent = 'Please import GL entries before adding documents.';
+        throw new Error('Please import GL entries before adding documents.');
+      }
+    } catch (error) {
+      if (error.message === 'Please import GL entries before adding documents.') {
+        throw error;
+      }
+      // Continue if GL check fails for other reasons
+    }
+
+    const chunk = 10;
+    let linkedTotal = 0;
+    let codexCount = 0;
+
+    for (let i = 0; i < list.length; i += chunk) {
+      const batch = list.slice(i, i + chunk);
+      if (statusEl) statusEl.textContent = `Uploading ${i + 1}-${Math.min(i + batch.length, list.length)} of ${list.length}...`;
+
+      try {
+        const resp = await ingestDocuments(this.apiBaseUrl, batch);
+        const links = (resp?.results || []).reduce((acc, r) => acc + (r?.links || []).length, 0);
+        linkedTotal += Number(links) || 0;
+
+        const codexResults = (resp?.results || []).filter(r => r.codexprocessing);
+        codexCount += codexResults.length;
+
+        // Handle duplicate notifications and optional replacement
+        const duplicates = (resp?.results || []).filter(r => r.duplicate);
+        for (const d of duplicates) {
+          const toReplace = this.confirmAsync ? (await this.confirmAsync(`A document named "${d.filename}" already exists. Replace it?`)) : confirm(`A document named "${d.filename}" already exists. Replace it?`);
+          if (toReplace) {
+            const fileObj = batch.find(f => f.name === d.filename);
+            if (fileObj) {
+              try {
+                const replaceResp = await ingestDocuments(this.apiBaseUrl, [fileObj], { duplicateAction: 'replace' });
+                console.log('Replace response:', replaceResp);
+                if (this.showToast) this.showToast(`Replaced: ${d.filename}`, 'success');
+              } catch (e) {
+                console.error('Replace failed for', d.filename, e);
+                if (this.showToast) this.showToast(`Failed to replace ${d.filename}: ${e?.message || e}`, 'error');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Batch upload failed:', err);
+        if (statusEl) statusEl.textContent = 'Upload failed.';
+        throw err;
+      }
+    }
+
+    if (statusEl) statusEl.textContent = `Processing complete! ${linkedTotal} links found, ${codexCount} codex processed.`;
+    if (this.showToast) this.showToast(`✅ Uploaded ${list.length} documents. ${linkedTotal} GL links found.`, 'success');
+
+    // Refresh UI components
+    await this.refreshDocsSummary();
+    await this.refreshRequirementsSummary();
+
+    try {
+      this.logPerformance('Docs Ingest', perfStart, `${list.length} files`);
+    } catch (_) {}
+  }
+
   addFileToUploadedExcelFiles(file) {
     const uploadedGLFiles = document.getElementById("uploaded-gl-files");
     if (!uploadedGLFiles) return;
